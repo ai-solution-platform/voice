@@ -174,3 +174,9 @@ a.hp-item:hover .hint-xs { color: inherit; }
 html[data-motion="reduce"] .hp-quick-card, html[data-motion="reduce"] .hp-cat { transition: none; }
 .hp-hours { display: flex; gap: 6px; align-items: flex-start; }
 .hp-hours .ico { flex: none; margin-top: 2px; }
+
+/* help center › common questions (FAQ) */
+.hp-faq-item { display: flex; flex-direction: column; gap: var(--s-2); align-items: flex-start; }
+.hp-faq-item + .hp-faq-item { border-top: 1px solid var(--border); padding-top: var(--s-3); }
+.hp-faq-item h3 { font-size: var(--fs-md); margin: 0; }
+.hp-faq-item .hp-prose { margin-top: 0; }

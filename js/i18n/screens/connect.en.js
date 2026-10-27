@@ -1,7 +1,7 @@
 // Connect — keys are registered as "connect.<key>".
 export default {
   title: 'Connect',
-  sub: 'Two ways in. Most teams make their first call within 10 minutes.',
+  sub: 'Two ways in. Set up your first call in about 10 minutes.',
   'crumb.api': 'HTTP API',
   'crumb.sip': 'SIP trunk',
   'cmd.trunk': 'Create a SIP trunk',
@@ -84,7 +84,7 @@ export default {
   'api.evSig': 'How to verify the signature',
   'api.evCopy': 'Copy payload',
   'prices.title': 'Prices',
-  'prices.line': 'Outbound {out}/min · inbound {inb}/min · OTP {otp} per answered call · numbers {number}/month · one price for SIP and API',
+  'prices.line': 'Outbound {out}/min · inbound {inb}/min · OTP {otp} per answered call · numbers {number}/month · one price for SIP and API. Calls are billed per started minute from answer. OTP and notification calls up to 1 minute are one price per answered call. Unanswered calls are free.',
   'prices.plans': 'Volume plans from {min} min a month (12 months) · partner and wholesale: contact sales',
   'prices.all': 'See all prices',
 

@@ -10,7 +10,7 @@ import { t } from '../core/i18n.js';
 import { fmt } from '../core/format.js';
 import { store } from '../core/store.js';
 import { go } from '../core/router.js';
-import { topUp, setEnv, setStep, balance, audit } from '../core/actions.js';
+import { topUp, setEnv, setStep, balance, audit, usageToday } from '../core/actions.js';
 import { PRICES, topUpBonus, firstTopUpOfferActive } from '../data/prices.js';
 import { modal, drawer } from './modal.js';
 import { popover } from './popover.js';
@@ -37,6 +37,9 @@ export function openTopUp({ goLive = false, annual = false, source = '' } = {}) 
     return t('topup.offerNone');
   };
 
+  // Business buyers who pay by bank transfer often withhold tax: the certificate upload is planned; no amount or rate is shown.
+  const whtNote = () => html`<p class="hint-xs" data-tu-wht style="display:flex;gap:6px;align-items:flex-start;margin:8px 0 0">${icon('file-text')}<span>${t('topup.wht')}</span></p>`;
+
   const pickBody = () => {
     const a = amount();
     const b = bonusNow();
@@ -51,7 +54,8 @@ export function openTopUp({ goLive = false, annual = false, source = '' } = {}) 
       <div class="note ${b.bonus ? 'note-brand' : ''}" style="margin-top:12px">${icon('sparkles')}<div><strong>${offerLine()}</strong><div class="hint-xs" style="margin-top:2px">${t('topup.noStack')}</div></div></div>
       <label class="check" style="margin-top:10px"><input type="checkbox" data-tu="annual" ${raw(st.annual ? 'checked' : '')}>${t('topup.annual', { pct: PRICES.offers.annualTopUpPct })}</label>
       <div class="field" style="margin-top:12px"><span class="label">${t('topup.method')}</span>
-        <div class="row">${['card', 'transfer', 'invoice'].map((m) => html`<label class="radio"><input type="radio" name="tu-method" data-tu="method" value="${m}" ${raw(st.method === m ? 'checked' : '')}>${t(`topup.m.${m}`)}</label>`)}</div></div>
+        <div class="row">${['card', 'transfer', 'invoice'].map((m) => html`<label class="radio"><input type="radio" name="tu-method" data-tu="method" value="${m}" ${raw(st.method === m ? 'checked' : '')}>${t(`topup.m.${m}`)}</label>`)}</div>
+        ${whtNote()}</div>
       <div class="card card-sunken" style="margin-top:14px;padding:12px 14px">
         <div class="kv"><span class="k">${t('topup.sumCredits')}</span><span class="v">${fmt.int(a)}</span></div>
         <div class="kv"><span class="k">${t('topup.sumBonus')}</span><span class="v">+${fmt.int(b.bonus)}</span></div>
@@ -69,7 +73,7 @@ export function openTopUp({ goLive = false, annual = false, source = '' } = {}) 
         <div class="kv"><span class="k">${t('topup.sumCredits')}</span><span class="v">${fmt.int(a)}</span></div>
         <div class="kv"><span class="k">${t('topup.method')}</span><span class="v">${t(`topup.m.${st.method}`)}</span></div>
         <div class="kv kv-total"><span class="k">${t('topup.amountThb')}</span><span class="v tnum">${t('topup.thbIncl', { amount: fmt.credits2(thb) })}</span></div>
-      </div>`;
+      </div>${st.method === 'card' ? '' : whtNote()}`;
   };
 
   const doneBody = (r) => html`<div class="empty empty-center" style="padding:24px 8px">
@@ -194,7 +198,7 @@ export function goLivePopover(anchor) {
 /** Spending-limits modal (bl.limits.edit · ov.chk.5 · ov.spend.edit). */
 export function spendingLimits({ onSaved } = {}) {
   const lim = store.get('limits') || {};
-  const today = store.get('mode') === 'active' ? (store.get('today.creditsUsedVoice') || 0) + (store.get('today.creditsUsedOther') || 0) : 0;
+  const today = store.get('mode') === 'active' ? ((usageToday() || {}).total || 0) : 0; // = Billing › Used today
   const body = html`<div class="stack-3">
       <label class="field"><span class="label">${t('limits.daily')}</span><input class="input tnum" data-lim="daily" inputmode="numeric" value="${lim.daily || 5000}"><span class="hint-xs">${t('limits.dailyHint')}</span></label>
       <label class="field"><span class="label">${t('limits.monthly')} <span class="opt">${t('common.optional')}</span></span><input class="input tnum" data-lim="monthly" inputmode="numeric" value="${lim.monthly || ''}"></label>

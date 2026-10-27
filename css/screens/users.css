@@ -14,8 +14,10 @@
 .us-rolechip { border: 1px solid var(--border); cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: 600; }
 .us-rolechip:hover { border-color: var(--border-strong); background: #fff; }
 .us-alone { border-top: 1px solid var(--border); }
-.us-partner { align-items: center; flex-wrap: wrap; }
-.us-partner .grow { flex: 1 1 260px; }
+.us-subdocs { align-items: center; flex-wrap: wrap; }
+.us-subdocs .grow { flex: 1 1 260px; }
+.us-docs > strong { min-width: 0; }
+.us-docs-chip { white-space: normal; text-align: left; }
 
 /* permission matrix */
 .us-mx td, .us-mx th { text-align: center; }

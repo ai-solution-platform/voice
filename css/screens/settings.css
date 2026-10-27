@@ -67,3 +67,16 @@
 @media (prefers-reduced-motion: reduce) { .st-dirty { animation: none; } }
 html[data-motion="reduce"] .st-dirty { animation: none; }
 .st-rate .st-rate-v { font-weight: 600; padding: 8px 0 2px; }
+
+/* industry presets (planned) · Healthcare lock on the recording notice · holiday list */
+.st-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-2); }
+.st-presets .optcard { width: 100%; height: 100%; }
+.st-presets .optcard .t, .st-presets .optcard .h { white-space: normal; overflow-wrap: anywhere; }
+.st-preset-rules { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); line-height: 1.5; }
+.st-preset-check { display: flex; gap: 6px; align-items: flex-start; margin: 0; color: var(--amber-700); }
+.st-lock { display: flex; gap: 6px; align-items: flex-start; color: var(--text); }
+.st-lock .ico, .st-preset-check .ico { flex: none; margin-top: 2px; }
+.st-hol { max-height: 52vh; overflow-y: auto; }
+.st-hol tr.is-weekday td:first-child { font-weight: 600; }
+html[lang="th"] .st-preset-rules { line-height: 1.75; }
+@media (max-width: 1023px) { .st-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

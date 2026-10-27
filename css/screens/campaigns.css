@@ -111,6 +111,7 @@
 .cp-cost { position: sticky; top: calc(var(--topbar-h) + 12px); }
 .cp-cost .card-head h3 { margin-right: auto; }
 .cp-cost-sub { margin: 0; }
+.cp-block { display: block; }
 .cp-foot { display: flex; gap: 6px; align-items: flex-start; margin: 0; }
 
 /* ---------- detail ---------- */
@@ -205,3 +206,27 @@ html[lang^="zh"] .cp-say { line-height: 1.85; }
 .cp-fb-head .label { white-space: normal; }
 .cp-fb-ch { align-items: center; gap: 8px; flex-wrap: wrap; }
 .cp-fb-price { color: var(--slate); }
+
+/* industry presets (planned) — step 1 */
+.cp-preset { display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-3) var(--s-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--card, #fff); }
+.cp-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-2); }
+.cp-presets .optcard { width: 100%; height: 100%; }
+.cp-presets .optcard .t, .cp-presets .optcard .h { white-space: normal; overflow-wrap: anywhere; }
+.cp-preset-rules ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); line-height: 1.5; }
+.cp-preset-check { display: flex; gap: 6px; align-items: flex-start; margin: 6px 0 0; color: var(--amber-700, var(--slate)); }
+.cp-people { align-items: flex-start; }
+.cp-people-hint { display: flex; gap: 6px; align-items: flex-start; margin: 0; }
+.cp-tip { align-items: flex-start; margin: 0; }
+/* the first calling day's window (step 3) — a public holiday ends at 18:00 */
+.cp-window { display: flex; gap: 6px; align-items: flex-start; margin: 4px 0 0; font-size: var(--fs-sm); color: var(--slate); }
+.cp-window.is-holiday { color: var(--amber-700, var(--text)); font-weight: 600; }
+.cp-window .ico { flex: none; margin-top: 2px; }
+/* "Send an SMS first" (step 3) */
+.cp-pre-text { margin: 0; padding: 8px 12px; border: 1px dashed var(--border-strong); border-radius: var(--r); background: #fff; font-size: var(--fs-sm); line-height: 1.6; overflow-wrap: anywhere; }
+html[lang="th"] .cp-pre-text, html[lang="th"] .cp-preset-rules ul { line-height: 1.75; }
+@media (max-width: 1023px) {
+  .cp-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 767px) {
+  .cp-preset { padding: var(--s-3); }
+}

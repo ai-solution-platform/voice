@@ -69,7 +69,7 @@ export default {
   'col.actions': '操作',
 
   'empty.title': '连接您办公室的电话系统',
-  'empty.body': 'SIP 中继让您的 PBX（FreePBX、3CX、Asterisk、Yeastar）通过 ANTS 拨打和接听电话。大多数团队约 10 分钟完成。',
+  'empty.body': 'SIP 中继让您的 PBX（FreePBX、3CX、Asterisk、Yeastar）通过 ANTS 拨打和接听电话。如果防火墙已就绪，设置约需 10 分钟。',
   'empty.s1': '告诉我们需要多少路同时通话',
   'empty.s2': '把我们的服务器信息填入您的 PBX',
   'empty.s3': '我们实时检测连接，然后由您启用',

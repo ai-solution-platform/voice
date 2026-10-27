@@ -34,7 +34,12 @@ export const PRICES = Object.freeze({
   trial: Object.freeze({ minutes: 50, otpCallUses: 0.5, verifiedNumbers: 3, days: 30 }),
 });
 
-/** Billing: the first minute is charged in full, then per started minute (round up). */
+/**
+ * Billing: per started minute from answer (talk seconds, rounded up; the first minute in full). The rate cards say
+ * it in one line (billing.rates.increment, connect.prices.line): "Calls are billed per started minute from answer.
+ * OTP and notification calls up to 1 minute are one price per answered call. Unanswered calls are free." —
+ * callCost() below is what makes that line true (otp ≤ otpMaxSec → otpPerAnsweredCall; !answered → 0).
+ */
 export function billedMinutes(sec) {
   const s = Math.max(0, Number(sec) || 0);
   return s <= 0 ? 0 : Math.ceil(s / 60);
@@ -203,7 +208,8 @@ export const thbToCredits = (thb, rate = DEMO_CREDIT_RATE) => r2(((Number(thb) |
 
 /**
  * A monthly commitment plan. The contract sets it (sales confirms it; the customer only requests one):
- *   committedMinutes × rate = monthlyCharge, charged on cycleStartDay and added as plan credits at once;
+ *   committedMinutes × rate = monthlyCharge, charged on cycleStartDay; it buys the plan minutes, a balance kept
+ *   apart from the credits (only outbound calls draw it — SMS, LINE, Email and other charges use credits);
  *   outbound minutes are drawn at the plan rate; minutes beyond the commitment are overage at the same rate;
  *   unused minutes follow the contract's unusedPolicy: 'expire' | 'rollover' (next month only) | 'carry' (carryMonths).
  */

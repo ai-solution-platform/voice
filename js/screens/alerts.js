@@ -5,7 +5,7 @@
 // Billing is what blocks calls.
 
 import { html as h, raw, reducedMotion } from '../core/dom.js';
-import { notify, audit, newId } from '../core/actions.js';
+import { notify, audit, newId, usageToday } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
 import { has } from '../core/i18n.js';
 
@@ -86,7 +86,7 @@ function tiles(ctx) {
   const day = history(ctx).filter((a) => nowMs() - new Date(a.at).getTime() < 86400000);
   const acked = day.filter((a) => a.status !== 'open').length;
   const lim = ctx.store.get('limits') || {};
-  const used = (ctx.store.get('billing.usedToday') || {}).total || 0;
+  const used = (usageToday() || {}).total || 0; // = Billing › Used today
   const ch = channelsInfo(ctx);
   const nCh = (ch.emails && ch.emails.length ? 1 : 0) + (ch.lineGroup ? 1 : 0) + (ch.webhook ? 1 : 0);
   return h`<div class="grid g-4 al-tiles">

@@ -20,6 +20,11 @@ const STEP_KEYS = ['type', 'pick', 'docs', 'review', 'done'];
 const GROUPS = { '02': ['02'], '03x': ['038', '035', '034'], '0xx': ['053', '043', '074'] };
 const CITY = { '02': 'bkk', '038': 'chonburi', '035': 'ayutthaya', '034': 'nakhonpathom', '053': 'chiangmai', '043': 'khonkaen', '074': 'hatyai' };
 const DOCS = ['cert', 'director', 'address'];
+/** Step 3 checklist (T2 audit #6): the three uploads + how the number is used + power of attorney = 5 items. */
+const USE_PURPOSES = ['otp', 'service', 'reminder', 'payment', 'marketing'];
+const SAMPLE_FILES = { cert: ['company-certificate-sample.pdf', 186368], director: ['director-id-sample.pdf', 142336], address: ['proof-of-address-sample.pdf', 97280], poa: ['power-of-attorney-sample.pdf', 120832] };
+/** The use declared with the documents on file (busy account): pre-fills the use item, editable. */
+const USE_ON_FILE = { purpose: 'otp', perDay: '1000' };
 const MODES = ['contains', 'starts', 'ends'];
 const ROUTES = ['flow', 'trunk', 'webhook', 'message'];
 const MESSAGES = ['otp-only', 'closed'];
@@ -34,6 +39,7 @@ const URL_RE = /^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/[\w./-]*)?$/i;
 const freshBuy = () => ({
   run: 0, step: 1, group: '02', area: '02', qty: 1, sub: null, mode: 'contains', digits: '24', page: 1, loading: false, results: null,
   picked: [], reserving: false, reservedAt: 0, reserved: [], expired: false, onFile: true, docs: {}, address: '', signer: '', consent: false,
+  use: { purpose: '', who: '', perDay: '', touched: false }, signerIsDirector: true,
   ordering: false, ordered: [], live: '',
 });
 export const initialState = () => ({ type: 'all', status: 'all', sub: 'all', q: '', buy: freshBuy(), d: null });
@@ -591,15 +597,15 @@ function buyStep2(ctx) {
     </div></div>`;
 }
 
-function docRow(ctx, key, i) {
+function docRow(ctx, key, i, { skip = false, extra = '' } = {}) {
   const { t, html: h, icon, fmt } = ctx;
-  const doc = ctx.state.buy.docs[key];
-  const st = doc ? doc.state : 'empty';
+  const doc = skip ? null : ctx.state.buy.docs[key];
+  const st = skip ? 'skip' : doc ? doc.state : 'empty';
   const checks = doc && doc.checks ? doc.checks : [];
-  return h`<li class="nm-doc is-${st}">
-    <div class="nm-doc-h"><span class="nm-doc-ico">${st === 'ok' ? icon('check', 'ico-sm') : st === 'bad' ? icon('x', 'ico-sm') : icon('file-text', 'ico-sm')}</span>
+  return h`<li class="nm-doc is-${st}" data-nm-doc="${key}">
+    <div class="nm-doc-h"><span class="nm-doc-ico">${st === 'ok' ? icon('check', 'ico-sm') : st === 'bad' ? icon('x', 'ico-sm') : st === 'skip' ? icon('minus', 'ico-sm') : icon('file-text', 'ico-sm')}</span>
       <div class="grow"><strong>${t(`docs.${key}`)}</strong><div class="hint-xs">${t(`docs.${key}H`)}</div></div>
-      ${st === 'empty' || st === 'bad' ? h`<div class="row nm-doc-a"><button type="button" class="btn btn-sm" data-action="by.3.upload" data-value="${key}">${icon('file', 'ico-sm')}${t('docs.sample')}</button>
+      ${st === 'skip' ? h`<span class="chip">${t('docs.poaNotNeeded')}</span>` : st === 'empty' || st === 'bad' ? h`<div class="row nm-doc-a"><button type="button" class="btn btn-sm" data-action="by.3.upload" data-value="${key}">${icon('file', 'ico-sm')}${t('docs.sample')}</button>
         <label class="btn btn-sm btn-ghost nm-filebtn">${icon('upload', 'ico-sm')}${t('docs.choose')}<input type="file" class="sr-only" data-field="file" data-doc="${key}" accept=".pdf,.jpg,.jpeg,.png" aria-label="${t('docs.chooseFor', { doc: t(`docs.${key}`) })}"></label></div>`
         : st === 'ok' ? h`<button type="button" class="btn btn-sm btn-ghost" data-action="by.3.remove" data-value="${key}">${t('docs.remove')}</button>` : ''}</div>
     ${doc ? h`<div class="nm-doc-b"><span class="mono hint-xs nm-fname" translate="no">${doc.name} · ${fmt.num(Math.max(1, Math.round(doc.size / 1024)), 0)} KB</span>
@@ -607,7 +613,43 @@ function docRow(ctx, key, i) {
       ${checks.length ? h`<ul class="nm-checks">${checks.map((c) => h`<li class="is-${c.ok == null ? 'run' : c.ok ? 'ok' : 'bad'}">${c.ok == null ? raw('<span class="spin" aria-hidden="true"></span>') : icon(c.ok ? 'check' : 'x', 'ico-xs')}<span>${t(`docs.chk.${c.k}`)}</span></li>`)}</ul>` : ''}
       ${st === 'ok' ? h`<span class="hint-xs ok-text">${t('docs.attached')}</span>` : ''}
       ${st === 'bad' ? h`<span class="hint-xs err-text">${t(`docs.bad.${doc.bad}`)}</span>` : ''}</div>` : ''}
+    ${extra}
   </li>`;
+}
+
+/** The use declared for the new number: the user's answers, or the declaration on file until they change it. */
+function useOf(ctx) {
+  const b = ctx.state.buy;
+  if (b.use.touched || !ctx.store.get('org.kycApproved')) return { ...b.use, prefilled: false };
+  return { purpose: USE_ON_FILE.purpose, who: ctx.t('docs.use.whoOnFile'), perDay: USE_ON_FILE.perDay, prefilled: true };
+}
+const useComplete = (u) => !!u.purpose && !!String(u.who || '').trim() && Number(u.perDay) > 0;
+
+/** Checklist item 4: how the number will be used (purpose · who is called · calls a day). */
+function useRow(ctx) {
+  const { t, html: h, icon, fmt } = ctx;
+  const u = useOf(ctx);
+  const ok = useComplete(u);
+  return h`<li class="nm-doc nm-use is-${ok ? 'ok' : 'empty'}" data-nm-doc="use">
+    <div class="nm-doc-h"><span class="nm-doc-ico">${icon(ok ? 'check' : 'edit', 'ico-sm')}</span>
+      <div class="grow"><strong>${t('docs.use')}</strong><div class="hint-xs">${t('docs.useH')}</div></div></div>
+    <div class="nm-use-f">
+      <label class="field"><span class="label">${t('docs.use.purpose')}</span><select class="select" data-field="usePurpose" data-action="by.3.purpose">
+        <option value="" ${raw(u.purpose ? '' : 'selected')}>${t('docs.use.pick')}</option>${USE_PURPOSES.map((p) => h`<option value="${p}" ${raw(u.purpose === p ? 'selected' : '')}>${t(`docs.use.p.${p}`)}</option>`)}</select></label>
+      <label class="field"><span class="label">${t('docs.use.who')}</span><input class="input" data-field="useWho" data-action="by.3.who" value="${u.who}" placeholder="${t('docs.use.whoPh')}" autocomplete="off"></label>
+      <label class="field"><span class="label">${t('docs.use.perDay')}</span><input class="input tnum" type="number" min="1" step="1" inputmode="numeric" data-field="usePerDay" data-action="by.3.perday" value="${u.perDay}" placeholder="${t('docs.use.perDayPh', { n: fmt.int(200) })}"></label>
+    </div>
+    ${u.prefilled ? h`<span class="hint-xs nm-use-note">${t('docs.use.onFile')}</span>` : ''}
+  </li>`;
+}
+
+/** Checklist item 5: power of attorney, needed only when the signer is not a director. */
+function poaRow(ctx, usingFile) {
+  const { t, html: h, icon } = ctx;
+  const b = ctx.state.buy;
+  if (usingFile) return h`<li class="nm-doc is-ok" data-nm-doc="poa"><div class="nm-doc-h"><span class="nm-doc-ico">${icon('check', 'ico-sm')}</span><div class="grow"><strong>${t('docs.poa')}</strong><div class="hint-xs">${t('docs.poaOnFile')}</div></div></div></li>`;
+  const box = h`<label class="check nm-poa-dir"><input type="checkbox" data-field="signerIsDirector" data-action="by.3.director" ${raw(b.signerIsDirector ? 'checked' : '')}>${t('docs.poaDirector')}</label>`;
+  return docRow(ctx, 'poa', 4, { skip: b.signerIsDirector, extra: box });
 }
 
 function buyStep3(ctx) {
@@ -619,9 +661,9 @@ function buyStep3(ctx) {
   return h`<div class="nm-grid">
     <div class="stack-4">
       ${kyc ? h`<label class="optcard nm-onfile"><span class="row-tight"><input type="checkbox" data-field="onFile" data-action="by.3.onfile" ${raw(b.onFile ? 'checked' : '')}><span class="t">${t('docs.onFile', { date: fmt.dateProse(kyc) })}</span></span><span class="h">${t('docs.onFileH')}</span></label>` : ''}
-      ${usingFile ? h`<ul class="nm-doclist">${DOCS.map((k) => h`<li class="nm-doc is-ok"><div class="nm-doc-h"><span class="nm-doc-ico">${icon('check', 'ico-sm')}</span><div class="grow"><strong>${t(`docs.${k}`)}</strong><div class="hint-xs">${t('docs.approved', { date: fmt.dayMonth(kyc) })}</div></div></div></li>`)}</ul>`
+      ${usingFile ? h`<ol class="nm-doclist">${DOCS.map((k) => h`<li class="nm-doc is-ok" data-nm-doc="${k}"><div class="nm-doc-h"><span class="nm-doc-ico">${icon('check', 'ico-sm')}</span><div class="grow"><strong>${t(`docs.${k}`)}</strong><div class="hint-xs">${t('docs.approved', { date: fmt.dayMonth(kyc) })}</div></div></div></li>`)}${useRow(ctx)}${poaRow(ctx, true)}</ol>`
         : h`<div class="note note-warn">${icon('shield')}<span>${t('docs.warn')}</span></div>
-          <ol class="nm-doclist">${DOCS.map((k, i) => docRow(ctx, k, i))}</ol>
+          <ol class="nm-doclist">${DOCS.map((k, i) => docRow(ctx, k, i))}${useRow(ctx)}${poaRow(ctx, false)}</ol>
           <label class="field"><span class="label">${t('docs.addr')}</span><textarea class="textarea" rows="2" data-field="address" data-action="by.3.addr" placeholder="${t('docs.addrPh')}">${b.address}</textarea></label>
           <label class="field"><span class="label">${t('docs.signer')}</span><input class="input" data-field="signer" data-action="by.3.signer" value="${b.signer}" placeholder="${t('docs.signerPh')}" autocomplete="off"></label>
           <label class="check nm-consent"><input type="checkbox" data-field="consent" data-action="by.3.consent" ${raw(b.consent ? 'checked' : '')}>${t('docs.consent')}</label>`}
@@ -637,8 +679,14 @@ function buyStep3(ctx) {
 function missingDocs(ctx) {
   const { t } = ctx;
   const b = ctx.state.buy;
-  if (ctx.store.get('org.kycApproved') && b.onFile) return [];
-  const out = DOCS.filter((k) => !(b.docs[k] && b.docs[k].state === 'ok')).map((k) => t(`docs.${k}Short`));
+  const usingFile = !!(ctx.store.get('org.kycApproved') && b.onFile);
+  const out = usingFile ? [] : DOCS.filter((k) => !(b.docs[k] && b.docs[k].state === 'ok')).map((k) => t(`docs.${k}Short`));
+  const u = useOf(ctx);
+  if (!u.purpose) out.push(t('docs.use.purposeShort'));
+  if (!String(u.who || '').trim()) out.push(t('docs.use.whoShort'));
+  if (!(Number(u.perDay) > 0)) out.push(t('docs.use.perDayShort'));
+  if (usingFile) return out;
+  if (!b.signerIsDirector && !(b.docs.poa && b.docs.poa.state === 'ok')) out.push(t('docs.poaShort'));
   if (!b.address.trim()) out.push(t('docs.addrShort'));
   if (!b.signer.trim()) out.push(t('docs.signerShort'));
   if (!b.consent) out.push(t('docs.consentShort'));
@@ -655,6 +703,8 @@ function syncMissing(root, ctx) {
   if (help) { help.textContent = missing.length ? msg : ''; help.hidden = !missing.length; }
   const next = root.querySelector('[data-action="by.next"]');
   if (next) { if (missing.length) next.setAttribute('aria-disabled', 'true'); else next.removeAttribute('aria-disabled'); }
+  const use = root.querySelector('[data-nm-doc="use"]');
+  if (use) { const ok = useComplete(useOf(ctx)); use.classList.toggle('is-ok', ok); use.classList.toggle('is-empty', !ok); }
 }
 
 /**
@@ -689,7 +739,8 @@ function buyStep4(ctx) {
           <div class="kv"><span class="k">${t('rev.area')}</span><span class="v">${b.area} · ${t(`city.${CITY[b.area]}`)}</span></div>
           ${subId ? h`<div class="kv"><span class="k">${t('by.1.sub')}</span><span class="v">${ctx.ui.describe.sub(subId)}</span></div>` : ''}</div></section>
       <section class="card nm-rev"><div class="card-head"><h3>${ctx.term(t('rev.docs'), 'kyc')}</h3><button type="button" class="linkbtn" data-action="by.4.edit" data-value="3">${t('rev.edit')}</button></div>
-        <div class="card-body"><p class="hint">${kyc && b.onFile ? t('rev.docsOnFile', { date: fmt.dateProse(kyc) }) : t('rev.docsNew', { signer: b.signer || '—' })}</p></div></section>
+        <div class="card-body stack"><p class="hint">${kyc && b.onFile ? t('rev.docsOnFile', { date: fmt.dateProse(kyc) }) : t('rev.docsNew', { n: fmt.int(DOCS.length + (b.signerIsDirector ? 0 : 1)), signer: b.signer || '—' })}</p>
+          ${(() => { const u = useOf(ctx); return h`<p class="hint" data-nm-rev-use>${t('rev.use', { purpose: u.purpose ? t(`docs.use.p.${u.purpose}`) : '—', who: String(u.who || '').trim() || '—', n: fmt.int(Number(u.perDay) || 0) })}</p>`; })()}</div></section>
       ${b.expired ? h`<div class="note note-err" role="alert">${icon('clock')}<div class="grow">${t('rev.expired')}</div><button type="button" class="btn btn-sm" data-action="by.2.again">${t('by.2.again')}</button></div>` : ''}
     </div>
     <aside class="card card-pad stack nm-pay" aria-labelledby="nm-pay-h">
@@ -733,7 +784,7 @@ function buyStep5(ctx) {
     <h2>${t('done.title', { count: nums.length, n: nums.length })}</h2>
     <div class="row nm-done-nums">${nums.map((n) => h`<span class="chip chip-navy mono" translate="no">${n.number}</span>`)}<span class="chip chip-warn">${t('st.review')}</span></div>
     <p class="hint">${t('done.body')}</p>
-    <ol class="nm-next"><li>${t('done.n1')}</li><li>${t('done.n2')}</li><li>${t('done.n3', { date: fmt.dateProse(firstMonth(PRICES.number).next) })}</li></ol>
+    <ol class="nm-next"><li>${t('done.n1')}</li><li>${t('done.n2')}</li><li>${sandbox(ctx) ? t('done.n3Sandbox') : t('done.n3', { date: fmt.dateProse(firstMonth(PRICES.number).next) })}</li></ol>
     <div class="row nm-done-a">
       <a class="btn btn-primary" href="#/numbers?n=${nums[0] ? nums[0].id : ''}" data-action="by.5.route">${icon('route')}${t('done.route')}</a>
       ${ret ? h`<a class="btn btn-navy" href="#/connect/sip" data-action="by.5.connect">${icon('server')}${t('done.connect')}</a>` : ''}
@@ -748,7 +799,9 @@ function docsView(ctx) {
     <div class="page-head"><div class="titles"><h1>${t('dv.title')}${ctx.pageHelp()}</h1><span class="sub">${t('dv.sub')}</span></div>
       <div class="tools"><a class="btn" href="#/numbers" data-action="by.docs.back">${icon('arrow-left', 'ico-sm')}${t('dv.back')}</a></div></div>
     <div class="card">${kyc ? h`<ul class="nm-doclist nm-dv">${DOCS.map((k) => h`<li class="nm-doc is-ok"><div class="nm-doc-h"><span class="nm-doc-ico">${icon('check', 'ico-sm')}</span>
-        <div class="grow"><strong>${t(`docs.${k}`)}</strong><div class="hint-xs">${t('docs.approved', { date: fmt.dayMonth(kyc) })}</div></div><span class="chip chip-ok">${t('dv.approved')}</span></div></li>`)}</ul>
+        <div class="grow"><strong>${t(`docs.${k}`)}</strong><div class="hint-xs">${t('docs.approved', { date: fmt.dayMonth(kyc) })}</div></div><span class="chip chip-ok">${t('dv.approved')}</span></div></li>`)}
+        <li class="nm-doc is-ok"><div class="nm-doc-h"><span class="nm-doc-ico">${icon('check', 'ico-sm')}</span><div class="grow"><strong>${t('docs.use')}</strong><div class="hint-xs">${t('rev.use', { purpose: t(`docs.use.p.${USE_ON_FILE.purpose}`), who: t('docs.use.whoOnFile'), n: fmt.int(Number(USE_ON_FILE.perDay)) })}</div></div><span class="chip chip-ok">${t('dv.approved')}</span></div></li>
+        <li class="nm-doc is-ok"><div class="nm-doc-h"><span class="nm-doc-ico">${icon('check', 'ico-sm')}</span><div class="grow"><strong>${t('docs.poa')}</strong><div class="hint-xs">${t('docs.poaOnFile')}</div></div></div></li></ul>
         <div class="card-foot hint-xs">${t('dv.note')}</div>`
       : h`<div class="empty empty-center"><strong>${t('dv.none')}</strong><span class="hint">${t('dv.noneHint')}</span><a class="btn btn-sm btn-navy" href="#/numbers/buy" data-action="by.docs.buy">${t('empty.get')}</a></div>`}</div></div>`;
 }
@@ -880,6 +933,10 @@ export function mount(root, ctx) {
     'by.3.addr': noop,
     'by.3.signer': noop,
     'by.3.consent': noop,
+    'by.3.purpose': noop,
+    'by.3.who': noop,
+    'by.3.perday': noop,
+    'by.3.director': noop,
     'by.3.help': noop,
     'nb.loa': () => loaModal(ctx),
     'nb.empty.loa': () => loaModal(ctx),
@@ -947,8 +1004,8 @@ export function mount(root, ctx) {
     },
     'by.3.upload': (el) => {
       const key = el.dataset.value;
-      const names = { cert: 'company-certificate-sample.pdf', director: 'director-id-sample.pdf', address: 'proof-of-address-sample.pdf' };
-      attach(ctx, key, { name: names[key], size: [186368, 142336, 97280][DOCS.indexOf(key)] });
+      const [name, size] = SAMPLE_FILES[key];
+      attach(ctx, key, { name, size });
     },
     'by.3.remove': (el) => {
       const s = ctx.state.buy;
@@ -986,8 +1043,19 @@ export function mount(root, ctx) {
     address: (v) => { ctx.state.buy.address = v; syncMissing(root, ctx); },
     signer: (v) => { ctx.state.buy.signer = v; syncMissing(root, ctx); },
     consent: (v) => { ctx.state.buy.consent = !!v; ctx.rerender(); },
+    signerIsDirector: (v) => { ctx.state.buy.signerIsDirector = !!v; ctx.rerender(); },
+    // How the number is used: typing updates "Still needed" in place; a committed change (select, blur) redraws the item.
+    usePurpose: (v) => setUse(ctx, 'purpose', v, true),
+    useWho: (v, el, ev) => setUse(ctx, 'who', v, ev && ev.type === 'change'),
+    usePerDay: (v, el, ev) => setUse(ctx, 'perDay', String(v).replace(/[^\d]/g, ''), ev && ev.type === 'change'),
     file: (v, el) => pickFile(el),
   });
+  function setUse(c, field, v, redrawNow) {
+    const s = c.state.buy;
+    const u = useOf(c);
+    s.use = { purpose: u.purpose, who: u.who, perDay: u.perDay, touched: true, [field]: v };
+    if (redrawNow) c.rerender(); else syncMissing(root, c);
+  }
   // A chosen file: its real name and size go through the same checks as the sample (name and size only, nothing is read).
   // Browsers fire "input" and "change" for a file picker; both paths land here once per file.
   function pickFile(el) {

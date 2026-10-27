@@ -30,7 +30,7 @@ export default {
   'story.start.t': 'Calls to one Thai mobile network start failing',
   'story.start.d': 'Part of the delivery-campaign calls fail with SIP 503 on the primary route. Failed calls are not charged.',
   'story.fired.t': 'Alert "High failure rate" sent by email and LINE',
-  'story.fired.d': '{pct}% failed in 15 minutes ({failed} of {of} calls, 14:08–14:23) — the rule fires above 10% with at least 50 calls.',
+  'story.fired.d': '{pct}% failed ({failed} of {of} calls in the 15 minutes to 14:23) — the rule fires above 10% with at least 50 calls.',
   'story.backup.t': 'ANTS moved the traffic to the backup Thai carrier route (planned)',
   'story.backup.d': 'Failed calls retry automatically, on the backup Thai carrier route if needed.',
   'story.resolved.t': 'Incident resolved on the status page',

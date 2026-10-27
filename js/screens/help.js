@@ -11,6 +11,8 @@ import { nowMs } from '../data/clock.js';
 import { PRICES } from '../data/prices.js';
 import { ARTICLES, ERRORS, STATUS_CODES } from '../data/reference.js';
 import { API_BASE, SIP_HOST } from '../data/edge.js';
+import { WEBHOOK_RETRY } from '../data/active.js';
+import { HOLIDAYS as THAI_HOLIDAYS, holidayOn, holidaysFrom, ymdOf } from '../data/holidays.js';
 
 export const id = 'help';
 export const nav = { group: 'account', icon: 'help', labelKey: 'nav.help' };
@@ -69,7 +71,14 @@ const WHATS_NEW = [
   { id: 'fallback', date: '2026-09-29', target: 'otp' },
   { id: 'reasons', date: '2026-09-22', target: 'logs?status=failed' },
 ];
-const HOLIDAYS = ['2026-10-23', '2026-12-05', '2026-12-07', '2026-12-10', '2026-12-31', '2027-01-01'];
+/** Thai public holidays: the one shared demo list (js/data/holidays.js) — support targets and the calling-hours article. */
+const HOLIDAYS = THAI_HOLIDAYS.map((x) => x.date);
+/** Weekday holiday used as the example in the calling-hours article (Thu 10 Dec 2026, Constitution Day; same as the campaign check). */
+const HOLIDAY_EXAMPLE = '2026-12-10';
+/** Webhook delivery rule of the API contract (§8 Delivery): 5 s timeout, retries in WEBHOOK_RETRY, off after 100 failures. */
+const WEBHOOK_DELIVERY = { timeoutSec: 5, offAfter: 100 };
+/** Common questions shown on the help center (and found by its search). */
+const FAQ = [{ id: 'callerid', href: '#/help/errors?code=voice-4213', action: 'hp.faq.error' }];
 const CALL_RE = /^call_[0-9A-Z]{8,}$/i;
 /** Same anchor ids as the Logs drawer links (#/help/errors?code=sip-503-q34). */
 const errorSlug = (code) => String(code).toLowerCase().replace(/ · q\.850 /, '-q').replace(/[\s_]+/g, '-');
@@ -86,6 +95,8 @@ function artVars(ctx, a) {
     recordingDays: p.recordingDays, intl: fmt.rate(p.international), plan1min: fmt.int(p.plans[0].minMinutes), plan1rate: fmt.rate(p.plans[0].rate), plan2min: fmt.int(p.plans[1].minMinutes),
     plan2rate: fmt.rate(p.plans[1].rate), salesFrom: fmt.int(p.plansContactSalesFrom), months: p.planMonths, trialMin: p.trial.minutes, trialNumbers: p.trial.verifiedNumbers, otpCalls: Math.round(p.trial.minutes / p.trial.otpCallUses), otpUses: fmt.num(p.trial.otpCallUses, 1), firstPct: p.offers.firstTopUpPct, firstCap: fmt.int(p.offers.firstTopUpCap), firstUntil: fmt.dateProse(p.offers.firstTopUpUntil), annualPct: p.offers.annualTopUpPct,
     cps: p.cpsDefault, api: API_BASE, sip: SIP_HOST, pbx: a && a.pbx ? a.pbx : '',
+    timeout: WEBHOOK_DELIVERY.timeoutSec, retry: WEBHOOK_RETRY.map((x) => `${fmt.int(x)} s`).join(' · '), attempts: WEBHOOK_RETRY.length + 1, offAfter: fmt.int(WEBHOOK_DELIVERY.offAfter),
+    holiday: fmt.dateProse(HOLIDAY_EXAMPLE, true), holidayName: holidayOn(HOLIDAY_EXAMPLE) ? locOf(holidayOn(HOLIDAY_EXAMPLE).name) : '',
   };
 }
 const fill = (s, v) => String(s).replace(/\{(\w+)\}/g, (m, k) => (v[k] == null ? m : String(v[k])));
@@ -157,6 +168,20 @@ function matches(ctx, a, q) {
   return words.every((w) => hay.includes(w));
 }
 
+const faqAnswer = (ctx, f) => { const v = ctx.t(`faq.${f.id}.a`); return Array.isArray(v) ? v : []; };
+function faqMatches(ctx, f, q) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = [ctx.t(`faq.${f.id}.q`), ...faqAnswer(ctx, f)].join(' ').toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+function faqCard(ctx, items) {
+  const { t, icon } = ctx;
+  if (!items.length) return '';
+  return h`<section class="card card-pad stack hp-faq" aria-labelledby="hp-faq-h"><h2 id="hp-faq-h">${t('faq.title')}</h2>
+    ${items.map((f) => h`<div class="hp-faq-item" id="faq-${f.id}"><h3>${t(`faq.${f.id}.q`)}</h3><div class="hp-prose">${faqAnswer(ctx, f).map((p) => h`<p>${md(ctx, p)}</p>`)}</div>
+      <a class="linkbtn" href="${f.href}" data-action="${f.action}">${icon('alert-circle', 'ico-sm')}<span translate="no">${t(`faq.${f.id}.link`)}</span></a></div>`)}</section>`;
+}
+
 function articleLink(ctx, a) {
   return h`<li><a class="hp-art" href="#/help/article/${a.slug}" data-action="hp.article" data-value="${a.slug}">${ctx.icon('file-text', 'ico-sm')}<span>${locOf(a.title)}</span></a></li>`;
 }
@@ -166,10 +191,11 @@ function center(ctx) {
   const q = ctx.state.q.trim();
   const cat = ctx.state.cat;
   const results = q ? ARTICLES.filter((a) => matches(ctx, a, q)) : null;
+  const faqHits = q ? FAQ.filter((f) => faqMatches(ctx, f, q)) : FAQ;
   const latest = WHATS_NEW[0];
   const list = results
-    ? h`<section class="card hp-results" aria-live="polite" aria-labelledby="hp-res-h"><div class="card-head"><h2 id="hp-res-h">${t('center.results', { n: results.length, q })}</h2><button type="button" class="btn btn-sm btn-ghost" data-action="hp.search.clear">${icon('x')}${t('center.clear')}</button></div>
-      ${results.length ? h`<ul class="hp-list">${results.map((a) => articleLink(ctx, a))}</ul>`
+    ? h`<section class="card hp-results" aria-live="polite" aria-labelledby="hp-res-h"><div class="card-head"><h2 id="hp-res-h">${t('center.results', { n: results.length + faqHits.length, q })}</h2><button type="button" class="btn btn-sm btn-ghost" data-action="hp.search.clear">${icon('x')}${t('center.clear')}</button></div>
+      ${results.length ? h`<ul class="hp-list">${results.map((a) => articleLink(ctx, a))}</ul>` : faqHits.length ? ''
         : h`<div class="empty"><span class="art">${icon('search')}</span><strong>${t('center.none', { q })}</strong><span class="hint">${t('center.noneHint')}</span>
           <a class="btn btn-sm btn-navy" href="#/help/contact" data-action="hp.noresult.contact">${icon('lifebuoy')}${t('help.contact')}</a></div>`}</section>`
     : h`<div class="hp-cats" role="group" aria-label="${t('center.catsAria')}">${CATS.map((c) => {
@@ -182,7 +208,7 @@ function center(ctx) {
     <div class="hp-hero card"><label class="hp-search"><span class="sr-only">${t('center.searchAria')}</span>${icon('search')}<input class="input" type="search" data-field="hp.q" data-action="hp.search" value="${ctx.state.q}" placeholder="${t('center.searchPh')}" autocomplete="off"></label>
       <div class="hp-quick">${QUICK.map(([k, slug, ic]) => h`<a class="hp-quick-card" href="#/help/article/${slug}" data-action="hp.quick" data-value="${slug}">${icon(ic)}<span>${t(`quick.${k}`)}</span></a>`)}</div></div>
     ${statusStrip(ctx)}
-    <div class="hp-main"><div class="stack-4">${list}</div>
+    <div class="hp-main"><div class="stack-4">${list}${faqCard(ctx, faqHits)}</div>
       <aside class="stack-4 hp-side">
         <section class="card card-pad stack"><h2>${t('side.contactTitle')}</h2>${hoursLine(ctx)}
           <ul class="hp-prio">${['P1', 'P2', 'P3'].map((p) => h`<li><span class="chip ${p === 'P1' ? 'chip-err' : p === 'P2' ? 'chip-warn' : ''}">${p}</span><span>${t(`prio.${p}.reply`)}</span></li>`)}</ul>
@@ -220,6 +246,13 @@ function articleExtras(ctx, a) {
       ${STATUS_CODES.map((c) => h`<tr><td>${ctx.ui.describe.statusChip(c)}</td><td class="mono" translate="no">${c}</td><td class="hint">${t(`statusTip.${c}`).replace(/^[a-z-]+ — /, '')}</td></tr>`)}</tbody></table></div>`;
   }
   if (a.slug === 'support-sla') return slaBlock(ctx);
+  if (a.slug === 'calling-hours-dnc') {
+    // The next public holidays from the shared list: each one uses the weekend hours (calls stop at 18:00).
+    const next = holidaysFrom(ymdOf(nowMs())).slice(0, 6);
+    return h`<h2>${t('hol.title')}</h2><div class="tbl-wrap hp-hol"><table class="tbl"><thead><tr><th>${t('hol.date')}</th><th>${t('hol.name')}</th><th>${t('hol.hours')}</th></tr></thead><tbody>
+      ${next.map((x) => h`<tr><td class="nowrap">${fmt.dateProse(x.date, true)}</td><td>${locOf(x.name)}</td><td class="mono nowrap">08:00–18:00</td></tr>`)}</tbody></table></div>
+      <p class="hint-xs">${t('hol.foot', { n: fmt.int(THAI_HOLIDAYS.length), until: fmt.dateProse(THAI_HOLIDAYS[THAI_HOLIDAYS.length - 1].date) })}</p>`;
+  }
   if (a.slug === 'volume-plans') {
     return h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('vp.minutes')}</th><th class="num">${t('vp.rate')}</th><th>${t('vp.terms')}</th></tr></thead><tbody>
       <tr><td>${t('vp.payg')}</td><td class="num mono">${fmt.rate(PRICES.outbound)}</td><td class="hint">${t('vp.noCommit')}</td></tr>

@@ -5,7 +5,7 @@
 // Every price comes from js/data/prices.js; every total from the store (js/data/active.js) so Overview = Billing = Reports.
 
 import { html as h, raw, on, reducedMotion } from '../core/dom.js';
-import { isActive, balance, addSalesRequest, describeProfile, isPostpaid, postpaidInvoices, creditRate, prepaidPlanAdjust, numberFeesMonth, sessionNumberFees, planAlerts, setPlanAlert, PLAN_ALERT_LEVELS } from '../core/actions.js';
+import { isActive, balance, addSalesRequest, describeProfile, isPostpaid, postpaidInvoices, creditRate, prepaidPlanAdjust, planMinutesBalance, numberFeesMonth, sessionNumberFees, planAlerts, setPlanAlert, PLAN_ALERT_LEVELS, sessionUsage, usageToday, usageMonth } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES, comparePlans, paygCost, firstTopUpOfferActive } from '../data/prices.js';
 
@@ -44,33 +44,40 @@ function statements(ctx) {
   const demoInv = invoices(ctx).filter((i) => i.demo);
   const demoCredits = demoInv.reduce((s, i) => s + i.credits, 0);
   const demoBonus = demoInv.reduce((s, i) => s + (i.bonus || 0), 0);
-  // Prepaid + plan: the plan credits added on the cycle day are part of this month's money in.
+  // Prepaid + plan: the plan charge (its own invoice) is part of this month's money in. It bought the plan minutes,
+  // a separate balance from the credits, so the month closes on both: credits + unused plan minutes at the plan rate.
   const adj = prepaidPlanAdjust();
   const planCredits = adj ? adj.planCredits : 0;
+  const pm = adj ? planMinutesBalance() : null;
+  const planLeft = pm ? pm.credits : 0;
+  const split = () => ({ credits: balance(), planLeft, planMin: pm ? pm.minutes : 0, closing: r2(balance() + planLeft) });
   if (!list.length) {
     if (!demoInv.length && !adj) return [];
-    const used = Math.max(0, r2(demoCredits + demoBonus + planCredits - balance()));
-    return [{ period: CUR_PERIOD, status: 'current', opening: 0, topUps: demoCredits, bonus: demoBonus, planCredits, used, closing: balance(), usedVoice: used }];
+    const sp = split();
+    const used = Math.max(0, r2(demoCredits + demoBonus + planCredits - sp.closing));
+    return [{ period: CUR_PERIOD, status: 'current', opening: 0, topUps: demoCredits, bonus: demoBonus, planCredits, used, ...sp, usedVoice: used }];
   }
   return list.map((s) => {
     if (s.status !== 'current') return { ...s, usedVoice: SEP_VOICE_USED };
     const topUps = s.topUps + demoCredits;
     const bonus = s.bonus + demoBonus;
-    const closing = balance();
-    const used = r2(s.opening + topUps + bonus + planCredits - closing);
+    const sp = split();
+    const used = r2(s.opening + topUps + bonus + planCredits - sp.closing);
     const usedVoice = r2(used - ((ctx.store.get('billing.usedMonth') || {}).other || 0));
-    return { ...s, topUps, bonus, planCredits, closing, used, usedVoice };
+    return { ...s, topUps, bonus, planCredits, ...sp, used, usedVoice };
   });
 }
-/** Credits spent by calls made in this demo session (live account), on top of the sample month. */
-function demoSpend(ctx) {
-  const cur = ctx.list('billing.statements').find((s) => s.status === 'current');
-  if (!cur) return 0;
-  const adj = prepaidPlanAdjust();
-  return Math.max(0, r2(cur.closing + demoTopUps(ctx) + (adj ? adj.planCredits + adj.reprice : 0) - balance()));
+/** Prepaid + plan: the plan minutes shown as their own balance (null otherwise, and in Sandbox). */
+const prepaidPlanMinutes = (ctx) => (!postpaid() && ctx.store.get('env') !== 'sandbox' ? planMinutesBalance() : null);
+/** The rule for unused plan minutes at the end of this cycle, in words. */
+function planExpiryLine(ctx, pm) {
+  const { t, fmt } = ctx;
+  if (pm.policy === 'rollover') return t('mode.planMin.rollover', { date: fmt.dateProse(pm.expires), next: fmt.dateProse(pm.renews) });
+  if (pm.policy === 'carry') return t('mode.planMin.carry', { date: fmt.dateProse(pm.expires), count: pm.carryMonths || 1 });
+  return t('mode.planMin.expire', { date: fmt.dateProse(pm.expires) });
 }
-/** Session spend other than number fees (those are in the "Numbers" line, live from the numbers list). */
-const demoCalls = (ctx) => Math.max(0, r2(demoSpend(ctx) - sessionNumberFees()));
+/** Session usage other than number fees (those are in the "Numbers" line, live from the numbers list). The same in every billing mode. */
+const demoCalls = () => Math.max(0, r2(sessionUsage() - sessionNumberFees()));
 /**
  * Usage rows this month: the sample usage with the number fees taken live from the numbers list (the same figure
  * as Numbers › "Number fees this month", the statement and the invoice), plus calls made in this demo session.
@@ -81,17 +88,18 @@ function usageRows(ctx) {
   if (fees.credits && !rows.some((u) => u.item === 'numbers')) rows.unshift({ product: 'voice', item: 'numbers', quantity: fees.count, unit: 'number', credits: fees.credits, fees });
   return rows;
 }
+/** Used today / this month: one definition for every billing mode (actions.js usageToday / usageMonth). */
 function usedToday(ctx) {
-  if (!ctx.store.get('billing.usedToday')) { const used = (statements(ctx)[0] || {}).used || 0; return { total: used, voice: used, other: 0 }; }
-  const u = ctx.store.get('billing.usedToday');
-  const d = demoSpend(ctx);
-  return { total: r2(u.total + d), voice: r2(u.voice + d), other: u.other };
+  const u = usageToday();
+  if (u) return u;
+  const used = (statements(ctx)[0] || {}).used || 0;
+  return { total: used, voice: used, other: 0 };
 }
 function usedMonth(ctx) {
-  if (!ctx.store.get('billing.usedMonth')) { const used = (statements(ctx)[0] || {}).used || 0; return { total: used, voice: used, other: 0 }; }
-  const u = ctx.store.get('billing.usedMonth');
-  const d = demoSpend(ctx);
-  return { total: r2(u.total + d), voice: r2(u.voice + d), other: u.other };
+  const u = usageMonth();
+  if (u) return u;
+  const used = (statements(ctx)[0] || {}).used || 0;
+  return { total: used, voice: used, other: 0 };
 }
 /** Outbound minutes in the last 30 days: the one figure the plan banner, the calculator and a plan request use. */
 function last30(ctx) {
@@ -204,10 +212,10 @@ function tiles(ctx) {
   const autoOn = auto && typeof auto === 'object' && auto.on;
   const pct = lim.daily ? Math.round((today.total / lim.daily) * 100) : 0;
   const pf = profile();
-  if (pf.mode === 'postpaid') month.total = pf.used;
-  if (pf.mode === 'postpaid') month.voice = r2(Math.max(0, pf.used - month.other));
+  const pm = prepaidPlanMinutes(ctx);
   const credLine = sandbox
     ? t('tile.creditsTrial', { left: fmt.num(Math.max(0, (ctx.store.get('credits.trialTotal') || 0) - (ctx.store.get('credits.trialUsed') || 0)), 1), total: fmt.int(PRICES.trial.minutes) })
+    : pm ? t('tile.creditsPlanMin', { n: fmt.int(pm.minutes), date: fmt.dayMonth(pm.expires) })
     : avg && isActive() ? t('tile.creditsRunway', { days: fmt.int(Math.floor(balance() / avg)) }) : t('tile.creditsLine');
   return h`<div class="grid g-5 bl-tiles">
     ${pf.mode === 'postpaid'
@@ -324,6 +332,7 @@ function rateCard(ctx) {
       ${row(h`${ctx.term(t('rates.transcription'), 'transcription')} <span class="chip chip-info">${t('common.beta')}</span>`, fmt.rate(p.transcription), t('rates.perMin'))}
       ${row(ctx.term(t('rates.recording'), 'retention'), fmt.rate(p.recording), t('rates.recordingUnit', { days: p.recordingDays }))}
     </tbody></table></div>
+    <p class="bl-increment" data-rates="increment">${icon('clock')}<span>${t('rates.increment')}</span></p>
     <div class="card-foot stack" style="gap:8px"><div class="row"><span class="chip">${t('rates.soon')}</span><span class="hint-xs">${t('rates.soonList')}</span></div>
       <div class="row" style="justify-content:space-between"><span class="hint-xs">${t('rates.foot')}</span>
       <button type="button" class="btn btn-sm" data-action="bl.rates.download">${icon('download')}${t('rates.download')}</button></div></div></section>`;
@@ -346,7 +355,7 @@ function limitsCard(ctx) {
       <div class="stack" style="gap:6px"><div class="row" style="justify-content:space-between"><strong>${t('limits.daily')}</strong><span class="mono">${fmt.credits2(today.total)} / ${fmt.int(lim.daily || 0)}</span></div>${bar(today.total, lim.daily)}
         <span class="hint-xs">${t('limits.dailyHint', { channels: chans })}</span></div>
       <div class="stack" style="gap:6px"><div class="row" style="justify-content:space-between"><strong>${t('limits.monthly')}</strong><span class="mono">${lim.monthly ? h`${fmt.credits2(month.total)} / ${fmt.int(lim.monthly)}` : t('limits.none')}</span></div>${lim.monthly ? bar(month.total, lim.monthly) : ''}
-        <span class="hint-xs">${t('limits.monthlyHint')}</span></div>
+        <span class="hint-xs">${postpaid() ? t('limits.monthlyHintPostpaid', { limit: fmt.int(profile().creditLimit) }) : t('limits.monthlyHint')}</span></div>
       <div class="note note-info">${icon('shield')}<span>${t('limits.blocks')}</span></div>
       </div><div class="stack-3"><div class="bl-kv"><span class="k">${t('limits.dest')}</span><span class="v stack" style="gap:6px;align-items:flex-end">
         <span class="row-tight"><span class="chip chip-ok">${icon('check')}${t('limits.destThai')}</span></span>
@@ -393,21 +402,30 @@ function modeCard(ctx) {
     const inv = pf.openInvoice;
     facts = h`${fact(t('mode.limit'), fmt.int(pf.creditLimit), t('mode.limitLine'))}
       <div class="bl-fact"><span class="k">${t('mode.used')}</span><span class="v">${fmt.credits2(used)} <span class="hint-xs">(${pct}%)</span></span>
-        <span class="progress ${pct >= 80 ? 'bl-prog-warn' : 'bl-prog'}" role="progressbar" aria-label="${t('mode.used')}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></span></div>
+        <span class="progress ${pct >= 80 ? 'bl-prog-warn' : 'bl-prog'}" role="progressbar" aria-label="${t('mode.used')}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></span>
+        ${pf.plan ? h`<span class="hint-xs">${t('mode.usedPlanLine', { charge: fmt.credits2(pf.plan.monthlyCharge) })}</span>` : ''}</div>
       ${fact(t('mode.terms'), t('mode.termsDays', { count: pf.termsDays }), inv && inv.issuedAt ? t('mode.termsLine', { date: fmt.dateProse(inv.issuedAt), due: inv.dueAt ? fmt.dateProse(inv.dueAt) : '—' }) : '')}`;
   } else {
     const auto = ctx.store.get('billing.autoTopUp');
     const autoOn = auto && typeof auto === 'object' && auto.on;
     const low = ctx.list('alertRules').find((r) => r.type === 'low-credits');
-    facts = h`${fact(t('mode.balance'), fmt.credits2(balance()), t('mode.balanceLine'))}
+    // Prepaid + plan: two balances side by side — credits (everything else) and plan minutes (outbound calls only).
+    const pm = prepaidPlanMinutes(ctx);
+    const balances = pm
+      ? h`<div class="bl-fact is-credits" data-bal="credits"><span class="k">${t('mode.creditsBal')}</span><span class="v">${fmt.credits2(balance())}</span><span class="hint-xs">${t('mode.creditsBalLine')}</span></div>
+        <div class="bl-fact is-plan" data-bal="plan"><span class="k">${t('mode.planMin.title')}</span><span class="v">${t('mode.planMin.value', { n: fmt.int(pm.minutes), min: fmt.int(pm.included) })}</span>
+          <span class="progress bl-prog" role="progressbar" aria-label="${t('mode.planMin.title')}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round((pm.minutes / Math.max(1, pm.included)) * 100)}"><i style="width:${Math.min(100, Math.round((pm.minutes / Math.max(1, pm.included)) * 100))}%"></i></span>
+          <span class="hint-xs strong" data-bal="expiry">${planExpiryLine(ctx, pm)}</span><span class="hint-xs">${t('mode.planMin.only')}</span></div>`
+      : fact(t('mode.balance'), fmt.credits2(balance()), t('mode.balanceLine'));
+    facts = h`${balances}
       ${fact(t('tile.auto'), h`${autoOn ? t('auto.on') : t('auto.off')} <button type="button" class="linkbtn hint-xs" data-action="bl.mode.auto">${t(autoOn ? 'mode.change' : 'mode.setUp')}</button>`, autoOn ? t('tile.autoLine', { below: fmt.int(auto.below), add: fmt.int(auto.add) }) : t('tile.autoOff'))}
       ${fact(t('mode.low'), h`${low && low.on ? t('mode.lowOn', { n: fmt.int((low.condition || {}).below || 0) }) : t('mode.lowOff')} <a class="linkbtn hint-xs" href="#/alerts${low ? `?rule=${low.id}` : ''}" data-action="bl.mode.low">${t('mode.change')}</a>`, t('mode.lowLine'))}`;
   }
   const other = pf.mode === 'postpaid' ? 'prepaid' : 'postpaid';
   return h`<section class="card bl-mode" id="bl-mode" aria-labelledby="bl-mode-h"><div class="card-head"><h2 id="bl-mode-h">${t('mode.title')}</h2>
       <span class="chip ${pf.mode === 'postpaid' ? 'chip-navy' : 'chip-ok'}">${t(`mode.${pf.mode}`)}${pf.plan ? ` + ${t('mode.withPlan', { min: fmt.int(pf.plan.committed) })}` : ''}</span></div>
-    <div class="card-body stack-3"><p class="hint bl-mode-what">${t(`mode.${pf.mode}What`)}</p>
-      <div class="bl-facts">${facts}</div>
+    <div class="card-body stack-3"><p class="hint bl-mode-what">${t(pf.mode === 'prepaid' && prepaidPlanMinutes(ctx) ? 'mode.prepaidPlanWhat' : `mode.${pf.mode}What`)}</p>
+      <div class="bl-facts ${pf.mode === 'prepaid' && prepaidPlanMinutes(ctx) ? 'is-split' : ''}">${facts}</div>
       <div class="row">${pf.mode === 'prepaid' ? h`<button type="button" class="btn btn-sm btn-primary" data-action="bl.topup">${icon('plus')}${t('topup')}</button>` : ''}
         ${req ? h`<span class="chip chip-warn">${icon('clock')}${t('mode.requested', { ref: req.ref })}</span>`
           : h`<button type="button" class="btn btn-sm" data-action="bl.mode.request" data-value="${other}">${icon('send')}${t('mode.request', { to: t(`mode.${other}`) })}</button>`}
@@ -540,7 +558,7 @@ function commitCard(ctx) {
       ${fig(t('commit.unused'), t('commit.perContract'), policy)}
       ${fig(t('commit.next'), fmt.dateProse(p.next), t('commit.nextLine', { amount: fmt.credits2(p.monthlyCharge) }))}
     </div>
-    ${p.added != null || p.carried ? h`<p class="hint-xs bl-commit-note">${p.added != null ? t('commit.added', { n: fmt.credits2(p.added) }) : ''}${p.added != null && p.carried ? ' · ' : ''}${p.carried ? t('commit.carried', { n: fmt.int(p.carried) }) : ''}</p>` : ''}
+    ${p.added != null || p.carried ? h`<p class="hint-xs bl-commit-note">${p.added != null ? t('commit.added', { min: fmt.int(p.committed), n: fmt.credits2(p.added) }) : ''}${p.added != null && p.carried ? ' · ' : ''}${p.carried ? t('commit.carried', { n: fmt.int(p.carried) }) : ''}</p>` : ''}
     ${burnSection(ctx, p, policy)}</div>
     <div class="card-foot row bl-commit-foot"><span class="hint-xs grow">${t('commit.foot')}</span>
       ${modeRequest(ctx) ? h`<span class="chip chip-warn">${icon('clock')}${t('mode.requested', { ref: modeRequest(ctx).ref })}</span>` : h`<button type="button" class="btn btn-sm" data-action="bl.plan.change">${icon('send')}${t('commit.change')}</button>`}</div></section>`;
@@ -603,7 +621,7 @@ function monthlyInvoicesCard(ctx) {
           <span class="row-tight bl-files"><button type="button" class="linkbtn hint-xs" data-action="bl.minv.pdf" data-value="${x.id}">${icon('file-text', 'ico-xs')}${t('minv.invoice')}</button><button type="button" class="linkbtn hint-xs" data-action="bl.stmt.csv" data-value="${x.period}">${icon('download', 'ico-xs')}${t('stmt.csv')}</button></span></td>
         <td>${chip(x)}</td><td class="nowrap">${x.issued ? tableDate(ctx, x.issued) : '—'}</td><td class="nowrap">${x.due ? tableDate(ctx, x.due) : '—'}</td>
         <td class="num mono strong">${fmt.credits2(x.amount)}${x.plan != null ? h`<span class="hint-xs bl-block">${t('minv.planPart', { n: fmt.credits2(x.plan) })}</span>` : ''}</td></tr>`)}</tbody></table></div>
-      <div class="card-foot hint-xs">${t('minv.foot', { thb: fmt.rate(rate) })}</div>`
+      <div class="card-foot hint-xs">${t('minv.foot', { thb: fmt.rate(rate) })} <span data-inv="taxlang">${t('print.taxLang')}</span></div>`
     : h`<div class="empty"><span class="art">${icon('file-text')}</span><strong>${t('minv.empty')}</strong></div>`}</section>`;
 }
 
@@ -613,6 +631,10 @@ function statementsCard(ctx) {
   const voiceOnly = ctx.state.stmt === 'voice';
   const adj = prepaidPlanAdjust();
   const withPlan = list.some((s) => s.planCredits);
+  // Prepaid + plan: the closing is two balances — credits and the unused plan minutes (at the plan rate).
+  const cur = list.find((s) => s.status === 'current');
+  const pm = adj ? planMinutesBalance() : null;
+  const splitFoot = cur && pm ? h`<br><span data-stmt="splitfoot">${t('stmt.footSplit', { closing: fmt.credits2(cur.closing), credits: fmt.credits2(cur.credits), n: fmt.int(pm.minutes), plan: fmt.credits2(cur.planLeft), rate: fmt.rate(pm.rate), date: tableDate(ctx, pm.expires) })}</span>` : '';
   return h`<section class="card bl-stmt" id="bl-statements" aria-labelledby="bl-stmt-h"><div class="card-head"><h2 id="bl-stmt-h">${t('stmt.title')}</h2>
       <div class="seg seg-sm" role="group" aria-label="${t('stmt.title')}">${['all', 'voice'].map((s) => h`<button type="button" data-action="bl.stmt.seg" data-value="${s}" aria-pressed="${ctx.state.stmt === s}">${t(`stmt.seg.${s}`)}</button>`)}</div></div>
     ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('stmt.period')}</th><th>${t('stmt.status')}</th><th class="num">${t('stmt.opening')}</th><th class="num">${t('stmt.topups')}</th><th class="num">${t('stmt.bonus')}</th>${withPlan ? h`<th class="num">${t('stmt.planCredits')}</th>` : ''}<th class="num">${voiceOnly ? t('stmt.usedVoice') : t('stmt.used')}</th><th class="num">${t('stmt.closing')}</th></tr></thead>
@@ -620,8 +642,9 @@ function statementsCard(ctx) {
           <span class="row-tight bl-files"><button type="button" class="linkbtn hint-xs" data-action="bl.stmt.csv" data-value="${s.period}">${icon('download', 'ico-xs')}${t('stmt.csv')}</button><button type="button" class="linkbtn hint-xs" data-action="bl.stmt.pdf" data-value="${s.period}">${icon('file-text', 'ico-xs')}${t('stmt.pdf')}</button></span></td>
         <td>${s.status === 'current' ? h`<span class="chip chip-warn">${t('stmt.current')}</span>` : h`<span class="chip">${t('stmt.closed')}</span>`}</td>
         <td class="num mono">${fmt.credits2(s.opening)}</td><td class="num mono">${fmt.credits2(s.topUps)}</td><td class="num mono">${s.bonus ? `+${fmt.credits2(s.bonus)}` : '0.00'}</td>${withPlan ? h`<td class="num mono">${s.planCredits ? `+${fmt.credits2(s.planCredits)}` : '0.00'}</td>` : ''}
-        <td class="num mono">${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}</td><td class="num mono strong">${fmt.credits2(s.closing)}</td></tr>`)}</tbody></table></div>
-      <div class="card-foot hint-xs">${voiceOnly ? t('stmt.footVoice') : withPlan ? t('stmt.footWithPlan') : t('stmt.foot')}${adj ? h`<br>${t('stmt.footPlan', { min: fmt.int(profile().plan.committed), id: adj.invoice.id, date: tableDate(ctx, adj.invoice.date), minutes: fmt.int(adj.minutes), rate: fmt.rate(profile().plan.rate) })}
+        <td class="num mono">${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}</td><td class="num mono strong">${fmt.credits2(s.closing)}${s.status === 'current' && s.planCredits ? h`<span class="hint-xs bl-block bl-d-only bl-closing-split" data-stmt="split"><span class="bl-block">${t('stmt.splitCredits', { credits: fmt.credits2(s.credits) })}</span><span class="bl-block">${t('stmt.splitPlan', { plan: fmt.credits2(s.planLeft) })}</span></span>` : ''}</td></tr>`)}</tbody></table></div>
+      <div class="card-foot hint-xs">${voiceOnly ? t('stmt.footVoice') : withPlan ? t('stmt.footWithPlan') : t('stmt.foot')}${adj ? h`<br>${t('stmt.footPlan', { min: fmt.int(profile().plan.committed), id: adj.invoice.id, date: tableDate(ctx, adj.invoice.date), minutes: fmt.int(profile().plan.used), rate: fmt.rate(profile().plan.rate) })}
+        ${splitFoot}
         <button type="button" class="linkbtn hint-xs" data-action="bl.stmt.planinv" data-value="${adj.invoice.id}">${t('stmt.openPlanInv', { id: adj.invoice.id })}</button>` : ''}</div>`
     : h`<div class="empty"><span class="art">${icon('file-text')}</span><strong>${t('stmt.empty')}</strong><span class="hint">${t('stmt.emptyHint')}</span></div>`}
   </section>`;
@@ -663,7 +686,7 @@ function invoicesCard(ctx) {
         <td class="num mono">${fmt.int(i.credits)}${i.bonus ? h` <span class="hint-xs">+${fmt.int(i.bonus)} ${t('inv.bonus')}</span>` : ''}</td><td class="num mono">${fmt.credits2(i.net)}</td><td class="num mono">${fmt.credits2(i.vat)}</td><td class="num mono strong">${fmt.credits2(i.total)}</td>
         <td class="num nowrap"><button type="button" class="btn btn-sm" data-action="bl.inv.download" data-value="${i.id}">${icon('file-text')}${t('inv.download')}</button>
           <button type="button" class="btn btn-sm" data-action="bl.inv.csv" data-value="${i.id}">${icon('download')}${t('inv.csv')}</button></td></tr>`)}</tbody></table></div>
-      <div class="card-foot hint-xs">${t('inv.foot')}</div>`
+      <div class="card-foot hint-xs">${t('inv.foot')} <span data-inv="taxlang">${t('print.taxLang')}</span></div>`
     : h`<div class="empty"><span class="art">${icon('file-text')}</span><strong>${t('inv.empty')}</strong><span class="hint">${t('inv.emptyHint')}</span>
       <button type="button" class="btn btn-sm btn-navy" data-action="bl.inv.topup">${icon('plus')}${t('topup')}</button></div>`}</section>`;
 }
@@ -672,7 +695,7 @@ function invoicesCard(ctx) {
 export function render(ctx) {
   if (ctx.state._raw !== ctx.params.raw) { ctx.state._raw = ctx.params.raw; ctx.state._handled = false; }
   const pp = postpaid();
-  return h`<div class="page bl">${header(ctx)}${nudgeBanner(ctx)}${tiles(ctx)}
+  return h`<div class="page bl"><span class="sr-only" aria-live="polite" data-bl-live></span>${header(ctx)}${nudgeBanner(ctx)}${tiles(ctx)}
     ${pp ? upcomingCard(ctx) : ''}
     ${commitCard(ctx)}
     <div class="grid g-2 bl-row2">${modeCard(ctx)}${offersCard(ctx)}</div>
@@ -703,6 +726,7 @@ function rateCardCsv(ctx) {
     { item: 'transcription', unit: 'minute', credits: p.transcription, note: 'optional, beta' },
     { item: 'recording', unit: 'minute', credits: p.recording, note: `kept ${p.recordingDays} days` },
   ].map((r) => ({ ...r, credits: r.credits === '' ? '' : Number(r.credits).toFixed(2) }));
+  rows.push({ item: '#', unit: '', credits: '', note: t('rates.increment') });
   rows.push({ item: '#', unit: '', credits: '', note: `${t('common.plannedPrices')} · ${t('common.exVat')}` });
   ctx.ui.csv('ants-voice-prices.csv', rows, ['item', 'unit', 'credits', 'note']);
 }
@@ -718,7 +742,7 @@ function usageCsv(ctx) {
 }
 
 const CALL_COLS = ['call_id', 'started_at', 'direction', 'source', 'subaccount', 'from', 'to', 'status', 'sip_code', 'q850', 'talk_seconds', 'billed', 'credits', 'recording', 'route', 'campaign_id', 'dtmf', 'reason_text'];
-function statementCsv(ctx, period) {
+function statementCsv(ctx, period, opts) {
   const { fmt } = ctx;
   const calls = ctx.list('calls').filter((c) => fmt.isoDate(c.ts).startsWith(period));
   const rows = calls.map((c) => ({
@@ -735,7 +759,7 @@ function statementCsv(ctx, period) {
     }
   }
   if (!rows.length) rows.push(Object.fromEntries(CALL_COLS.map((k) => [k, k === 'reason_text' ? ctx.t('stmt.noCalls') : ''])));
-  ctx.ui.csv(`ants-statement-${period}-calls.csv`, rows, CALL_COLS);
+  ctx.ui.csv(`ants-statement-${period}-calls.csv`, rows, CALL_COLS, opts);
 }
 
 const printCss = `body{font:14px/1.5 Inter,"Noto Sans Thai","Noto Sans SC",system-ui,sans-serif;color:#1B2B4D;margin:0;padding:40px;background:#fff}
@@ -744,26 +768,43 @@ const printCss = `body{font:14px/1.5 Inter,"Noto Sans Thai","Noto Sans SC",syste
 table{width:100%;border-collapse:collapse;margin-top:8px}th,td{text-align:left;padding:8px;border-bottom:1px solid #E7ECF4}th{font-size:12px;color:#5B6781}
 .num{text-align:right;font-variant-numeric:tabular-nums}.muted{color:#5B6781;font-size:12px}.tot td{font-weight:700;border-top:2px solid #14274A}
 .cols{display:flex;gap:40px;margin-top:16px}.cols div{flex:1}.bar{height:6px;background:#14274A;border-radius:3px;margin-bottom:16px}
+.bk{display:block;margin-top:2px}.tl{margin:16px 0 0;padding:8px 10px;border:1px solid #E7ECF4;border-left:3px solid #14274A;border-radius:4px;font-size:13px}
 @media print{body{padding:0}}`;
 
-function printable(ctx, { title, filename, lines, meta, totals, note }) {
+/** Billing contact on the sample invoice: the account's admin (invented cast), else the owner. */
+function billingContact(ctx) {
+  const members = ctx.list('members');
+  const m = members.find((x) => x.role === 'admin' && x.name && !x.pending) || members.find((x) => x.role === 'owner') || ctx.store.get('user') || {};
+  return [m.name, m.email].filter(Boolean).join(' · ') || '—';
+}
+
+/**
+ * Printable sample (opens the print dialog). `invoice: true` adds what a Thai tax invoice carries for a business
+ * buyer — head office / branch no., PO number (optional), billing contact — and the note that tax invoices are
+ * issued in Thai or English, in baht (the same note in the Chinese UI: the tax invoice itself is never in Chinese).
+ */
+function printable(ctx, { title, filename, lines, meta, totals, note, invoice = false }, opts) {
   const { t, esc } = ctx;
   const org = ctx.loc(ctx.store.get('org.name'));
+  const buyerRows = [`${esc(t('print.taxId'))} 0-0000-00000-00-0`, `${esc(t('print.branch'))}: ${esc(t('print.headOffice'))}`];
+  if (invoice) buyerRows.push(`${esc(t('print.contact'))}: ${esc(billingContact(ctx))}`);
+  const metaRows = invoice ? [...meta, [t('print.po'), t('print.poNone')]] : meta;
   const doc = `<!doctype html><html lang="${ctx.lang === 'zh' ? 'zh-Hans' : ctx.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
 <title>${esc(title)}</title><style>${printCss}</style></head><body><div class="wm">${esc(t('print.watermark'))}</div><div class="sheet"><div class="bar"></div>
 <h1>${esc(title)}</h1><div class="muted">${esc(t('print.sampleNote'))}</div>
 <div class="cols"><div><strong>${esc(t('print.seller'))}</strong><br>${esc(t('print.sellerName'))}<br><span class="muted">${esc(t('print.sellerNote'))}</span></div>
-<div><strong>${esc(t('print.buyer'))}</strong><br>${esc(org)}<br><span class="muted">${esc(t('print.taxId'))} 0-0000-00000-00-0</span></div></div>
-<table>${meta.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>
+<div data-print="buyer"><strong>${esc(t('print.buyer'))}</strong><br>${esc(org)}${buyerRows.map((r) => `<span class="muted bk">${r}</span>`).join('')}</div></div>
+<table>${metaRows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>
 <h2>${esc(t('print.lines'))}</h2><table><tr><th>${esc(t('print.item'))}</th><th class="num">${esc(t('print.qty'))}</th><th class="num">${esc(t('print.amount'))}</th></tr>
 ${lines.map(([a, b, c]) => `<tr><td>${esc(a)}</td><td class="num">${esc(b)}</td><td class="num">${esc(c)}</td></tr>`).join('')}
 ${totals.map(([a, c], i) => `<tr class="${i === totals.length - 1 ? 'tot' : ''}"><td>${esc(a)}</td><td></td><td class="num">${esc(c)}</td></tr>`).join('')}</table>
+${invoice ? `<p class="tl" data-print="taxlang">${esc(t('print.taxLang'))}</p>` : ''}
 <p class="muted">${esc(note)}</p><p class="muted">${esc(t('common.plannedPrices'))} · ${esc(t('app.demoShort'))}</p></div>
 <script>window.addEventListener('load',function(){setTimeout(function(){window.print()},300)});</script></body></html>`;
-  ctx.ui.download(filename, doc, 'text/html;charset=utf-8');
+  ctx.ui.download(filename, doc, 'text/html;charset=utf-8', opts);
 }
 
-function invoiceHtml(ctx, inv) {
+function invoiceHtml(ctx, inv, opts) {
   const { t, fmt } = ctx;
   const plan = inv.plan ? { min: fmt.int(inv.minutes || inv.credits), rate: fmt.rate(inv.rate || 0), month: monthLabel(ctx, inv.period || String(inv.date).slice(0, 7)) } : null;
   printable(ctx, {
@@ -774,16 +815,17 @@ function invoiceHtml(ctx, inv) {
       : [[t('print.creditsLine'), fmt.int(inv.credits), fmt.credits2(inv.net)], ...(inv.bonus ? [[t('print.bonusLine'), fmt.int(inv.bonus), '0.00']] : [])],
     totals: [[t('inv.net'), fmt.credits2(inv.net)], [t('inv.vat'), fmt.credits2(inv.vat)], [t('print.totalThb'), fmt.credits2(inv.total)]],
     note: plan ? t('print.planNote') : t('print.creditUnit'),
-  });
+    invoice: true,
+  }, opts);
 }
-function invoiceCsv(ctx, inv) {
+function invoiceCsv(ctx, inv, opts) {
   const row = inv.plan
     ? { invoice: inv.id, date: inv.date, item: `commitment_plan_${inv.minutes || ''}`, quantity: inv.minutes || '', unit: 'minute', rate: (inv.rate || 0).toFixed(2), credits: inv.credits, bonus_credits: 0 }
     : { invoice: inv.id, date: inv.date, item: 'credits_topup', quantity: inv.credits, unit: 'credit', rate: '1.00', credits: inv.credits, bonus_credits: inv.bonus || 0 };
-  ctx.ui.csv(`${inv.id}-sample.csv`, [{ ...row, amount_before_vat: inv.net.toFixed(2), vat_7: inv.vat.toFixed(2), total_thb: inv.total.toFixed(2), note: 'SAMPLE - not a tax invoice' }]);
+  ctx.ui.csv(`${inv.id}-sample.csv`, [{ ...row, amount_before_vat: inv.net.toFixed(2), vat_7: inv.vat.toFixed(2), total_thb: inv.total.toFixed(2), note: 'SAMPLE - not a tax invoice' }], undefined, opts);
 }
 
-function monthlyInvoiceHtml(ctx, x) {
+function monthlyInvoiceHtml(ctx, x, opts) {
   const { t, fmt } = ctx;
   const rate = creditRate().thb || 1;
   const line = (l) => [t(`minv.line.${l.kind}`), lineQty(ctx, l, true), fmt.credits2(l.credits)];
@@ -794,14 +836,17 @@ function monthlyInvoiceHtml(ctx, x) {
     lines: (x.lines.length ? x.lines : [{ kind: 'usage', credits: x.amount }]).filter((l) => l.credits || ['plan', 'planMinutes', 'usage'].includes(l.kind)).map(line),
     totals: [[t('minv.credits'), fmt.credits2(x.amount)], [t('inv.net'), fmt.credits2(x.net ?? x.amount * rate)], [t('inv.vat'), fmt.credits2(x.vat ?? 0)], [t('print.totalThb'), fmt.credits2(x.total ?? 0)]],
     note: t('minv.printNote', { thb: fmt.rate(rate) }),
-  });
+    invoice: true,
+  }, opts);
 }
 
-function statementHtml(ctx, period) {
+function statementHtml(ctx, period, opts) {
   const { t, fmt } = ctx;
   const s = statements(ctx).find((x) => x.period === period);
   if (!s) return;
   const voiceOnly = ctx.state.stmt === 'voice';
+  const pm = s.status === 'current' && s.planCredits ? planMinutesBalance() : null;
+  const splitLines = pm ? [[t('stmt.closingCredits'), '', fmt.credits2(s.credits)], [t('stmt.closingPlan', { date: fmt.dateProse(pm.expires) }), `${fmt.int(pm.minutes)} ${t('usage.unit.min')}`, fmt.credits2(s.planLeft)]] : [];
   printable(ctx, {
     title: t('print.stmtTitle', { month: monthLabel(ctx, period) }),
     filename: `ants-statement-${period}-sample.html`,
@@ -809,10 +854,12 @@ function statementHtml(ctx, period) {
     lines: [[t('stmt.opening'), '', fmt.credits2(s.opening)], [t('stmt.topups'), '', fmt.credits2(s.topUps)], [t('stmt.bonus'), '', fmt.credits2(s.bonus)], ...(s.planCredits ? [[t('stmt.planCredits'), '', fmt.credits2(s.planCredits)]] : []), [voiceOnly ? t('stmt.usedVoice') : t('stmt.used'), '', `−${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}`],
       // The current month itemises "used" with the same rows as Billing › Usage (number fees live from Numbers).
       ...(s.status === 'current' ? usageRows(ctx).filter((u) => !voiceOnly || u.product === 'voice').map((u) => [`· ${t(`usage.item.${u.item}`)}`, u.product === 'voice' ? lineQty(ctx, { quantity: u.quantity, unit: u.unit }) : '', fmt.credits2(u.credits)])
-        .concat(demoCalls(ctx) ? [[`· ${t('usage.item.demo')}`, '', fmt.credits2(demoCalls(ctx))]] : []) : [])],
+        .concat(demoCalls(ctx) ? [[`· ${t('usage.item.demo')}`, '', fmt.credits2(demoCalls(ctx))]] : []) : []),
+      // Prepaid + plan: the closing is two balances — credits and the unused plan minutes (at the plan rate).
+      ...splitLines],
     totals: [[t('stmt.closing'), fmt.credits2(s.closing)]],
     note: t('print.stmtNote'),
-  });
+  }, opts);
 }
 
 // ---------- dialogs ----------
@@ -904,6 +951,24 @@ function calculator(ctx, startMinutes) {
 }
 
 // ---------- behaviour ----------
+// Row-level files (statements, invoices) confirm on the button itself — icon → check and "Downloaded <file>" for
+// screen readers — instead of one toast per row: a pile of toasts sits bottom-right, exactly over the next rows'
+// buttons. Page-level downloads (usage CSV, rate card, invoice preview) keep the generic "Downloaded" toast.
+const QUIET = Object.freeze({ toast: false });
+const fileState = new WeakMap();
+function fileDone(ctx, el, file) {
+  if (!el) return;
+  const live = el.closest('.page') && el.closest('.page').querySelector('[data-bl-live]');
+  if (live) { live.textContent = ''; live.textContent = ctx.t('common.downloaded', { file }); }
+  if (!fileState.has(el)) {
+    fileState.set(el, el.innerHTML);
+    const ico = el.querySelector('svg.ico');
+    if (ico) ico.outerHTML = String(ctx.icon('check', (ico.getAttribute('class') || '').replace(/^ico\s*/, '')));
+    el.classList.add('is-done');
+  }
+  ctx.later(() => { if (el.isConnected && fileState.has(el)) { el.innerHTML = fileState.get(el); fileState.delete(el); el.classList.remove('is-done'); } }, 1600);
+}
+
 export function mount(root, ctx) {
   const { t } = ctx;
   const refreshFresh = () => {
@@ -950,17 +1015,17 @@ export function mount(root, ctx) {
       const ref = addSalesRequest('plan-change', { plan: p ? p.id : null });
       ctx.ui.toast(t('commit.changeToast', { ref }), { kind: 'success', demo: true });
     },
-    'bl.minv.pdf': (el) => { const x = monthlyInvoices().find((i) => i.id === el.dataset.value); if (x) monthlyInvoiceHtml(ctx, x); },
+    'bl.minv.pdf': (el) => { const x = monthlyInvoices().find((i) => i.id === el.dataset.value); if (x) { monthlyInvoiceHtml(ctx, x, QUIET); fileDone(ctx, el, `${x.id}-sample.html`); } },
     'bl.offer.row': (el) => {
       const v = el.dataset.value;
       if (v === 'annual') ctx.ui.topup({ annual: true, source: 'billing-offer' });
       else if (v === 'launch') ctx.ui.topup({ source: 'billing-offer' });
     },
     'bl.stmt.seg': (el) => ctx.setState({ stmt: el.dataset.value }),
-    'bl.stmt.csv': (el) => statementCsv(ctx, el.dataset.value),
-    'bl.stmt.pdf': (el) => statementHtml(ctx, el.dataset.value),
-    'bl.inv.download': (el) => { const inv = invoices(ctx).find((i) => i.id === el.dataset.value); if (inv) invoiceHtml(ctx, inv); },
-    'bl.inv.csv': (el) => { const inv = invoices(ctx).find((i) => i.id === el.dataset.value); if (inv) invoiceCsv(ctx, inv); },
+    'bl.stmt.csv': (el) => { statementCsv(ctx, el.dataset.value, QUIET); fileDone(ctx, el, `ants-statement-${el.dataset.value}-calls.csv`); },
+    'bl.stmt.pdf': (el) => { statementHtml(ctx, el.dataset.value, QUIET); fileDone(ctx, el, `ants-statement-${el.dataset.value}-sample.html`); },
+    'bl.inv.download': (el) => { const inv = invoices(ctx).find((i) => i.id === el.dataset.value); if (inv) { invoiceHtml(ctx, inv, QUIET); fileDone(ctx, el, `${inv.id}-sample.html`); } },
+    'bl.inv.csv': (el) => { const inv = invoices(ctx).find((i) => i.id === el.dataset.value); if (inv) { invoiceCsv(ctx, inv, QUIET); fileDone(ctx, el, `${inv.id}-sample.csv`); } },
     'bl.stmt.planinv': (el) => {
       const id = el.dataset.value;
       ctx.setState({ flashInv: id });

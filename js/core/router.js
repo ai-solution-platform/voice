@@ -12,6 +12,7 @@ import { fmt } from './format.js';
 import { store } from './store.js';
 import { closeAll } from '../ui/overlay.js';
 import { reqId, reqIdLine } from '../ui/reqid.js';
+import { replaceSafely } from './press.js';
 
 const screens = new Map();
 const order = [];
@@ -247,8 +248,18 @@ function errorState(mod, params, code = 'HTTP 503') {
     <a class="btn" href="#/help/status">${ui.icon('activity')}${t('common.checkStatus')}</a></div></div></div>`;
 }
 
-/** Re-render the current screen in place: keeps scroll position and keyboard focus. */
+/**
+ * Re-render the current screen in place: keeps scroll position and keyboard focus. A re-render asked for while a
+ * button of the screen is being pressed (blur validation, a watcher, a ticker) waits until its click has run, so the
+ * click is never lost to a replaced button (core/press.js).
+ */
 export function rerender() {
+  if (!current.mod || !outlet) return;
+  const token = navToken;
+  replaceSafely(outlet, () => { if (token === navToken) rerenderNow(); });
+}
+
+function rerenderNow() {
   if (!current.mod || !outlet) return;
   const y = window.scrollY;
   const key = focusKeyOf(document.activeElement);

@@ -71,6 +71,15 @@
 .bl-fact .k { font-size: var(--fs-xs); color: var(--slate); }
 .bl-fact .v { font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .bl-fact .progress { margin-top: 4px; }
+/* prepaid + plan: two balances (credits · plan minutes) on the first row, auto top-up and alert below */
+.bl-facts.is-split { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.bl-fact.is-plan { border-color: var(--navy-50); }
+.bl-closing-split { font-weight: 400; }
+.bl-closing-split > span { white-space: nowrap; }
+
+/* rate card › billing increment (one line under the table) */
+.bl-increment { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 10px var(--s-4); border-top: 1px solid var(--border); font-size: var(--fs-sm); color: var(--text-2); }
+.bl-increment .ico { flex: none; margin-top: 2px; color: var(--slate); }
 
 /* commitment plan */
 .bl-commit { border-color: var(--navy-50); }
@@ -156,18 +165,19 @@
   .bl-row1 { grid-template-columns: minmax(0, 1fr); }
   .bl-burn { grid-template-columns: minmax(0, 1fr); }
   .bl-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .bl-facts { grid-template-columns: minmax(0, 1fr); }
+  .bl-facts, .bl-facts.is-split { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 1023px) {
   .bl-row2 { grid-template-columns: minmax(0, 1fr); }
   .bl-limits-body { grid-template-columns: minmax(0, 1fr); }
   .bl-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .bl-facts.is-split { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 767px) {
   .bl-plan-grid, .bl-calc-grid { grid-template-columns: minmax(0, 1fr); }
   .bl-figs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .bl-fig strong { font-size: var(--fs-md); }
-  .bl-facts { grid-template-columns: minmax(0, 1fr); }
+  .bl-facts, .bl-facts.is-split { grid-template-columns: minmax(0, 1fr); }
   .bl-bars { gap: 3px; height: 180px; }
   .bl-row1 > .bl-chart .bl-bars { flex-basis: 180px; min-height: 180px; }
   .bl-sums { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -187,3 +197,5 @@
 }
 @media (prefers-reduced-motion: reduce) { .bl-stack { animation: none; } .bl-flash { animation: none; } }
 html[data-motion="reduce"] .bl-stack, html[data-motion="reduce"] .bl-flash { animation: none; }
+/* row-level files confirm on the button (icon → check) instead of stacking toasts over the next rows */
+.bl .is-done, .bl .is-done .ico { color: var(--green-fill); }

@@ -26,6 +26,13 @@ let showTimer = null;
 let hideTimer = null;
 let lastHidden = 0;
 let tipId = 'tooltip-live';
+let watchTimer = null;
+/** The anchor is gone (re-render, route change) or hidden: a tooltip must never outlive it. */
+const anchorGone = (el) => {
+  if (!el || !el.isConnected) return true;
+  const r = el.getBoundingClientRect();
+  return !r.width && !r.height;
+};
 
 function ensure() {
   if (tip && document.body.contains(tip)) return tip;
@@ -63,6 +70,7 @@ function place(el) {
 function show(el) {
   clearTimeout(hideTimer);
   clearTimeout(showTimer);
+  if (anchorGone(el)) return; // a delayed show for an element that was re-rendered away would pin it at the top left
   ensure();
   if (current && current !== el) current.removeAttribute('aria-describedby');
   current = el;
@@ -71,10 +79,14 @@ function show(el) {
   place(el);
   el.setAttribute('aria-describedby', tipId);
   effect('tooltip');
+  // While open: hide as soon as the anchor leaves the page (no pointerout fires for a removed element).
+  clearInterval(watchTimer);
+  watchTimer = setInterval(() => { if (anchorGone(current)) hide(); }, 200);
 }
 
 function hide() {
   clearTimeout(showTimer);
+  clearInterval(watchTimer);
   if (!tip) return;
   tip.classList.remove('is-open');
   if (current) current.removeAttribute('aria-describedby');
@@ -134,6 +146,9 @@ export function initTooltips() {
     }
   }, true);
   window.addEventListener('scroll', () => { if (current) hide(); }, true);
+  // A new screen, or a dialog / drawer / menu opening or closing, takes the tooltip with it (overlay.js 'demo:layers').
+  window.addEventListener('hashchange', () => hide());
+  window.addEventListener('demo:layers', () => hide());
 }
 
 export function hideTooltip() { hide(); }

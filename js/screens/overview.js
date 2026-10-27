@@ -4,7 +4,7 @@
 // spend, trunk health, recent calls). Every number comes from the store (js/data/active.js).
 
 import { raw, reducedMotion } from '../core/dom.js';
-import { stepsDone, isActive, trialLeft, balance, setStep, describeProfile } from '../core/actions.js';
+import { stepsDone, isActive, trialLeft, balance, setStep, describeProfile, usageToday, usageMonth } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES } from '../data/prices.js';
 
@@ -51,7 +51,8 @@ function activeStats(ctx) {
   const r = ctx.store.get('reports');
   let st;
   if (range === 'today') {
-    st = { calls: today.calls, outbound: today.outbound, otp: today.otpNotif, inbound: today.inbound, answered: today.answered, used: today.creditsUsedVoice, failed: today.failed, failed503: today.failed503 };
+    // Voice credits today: the same figure as Billing › Used today › Voice (one usage rule in every billing mode).
+    st = { calls: today.calls, outbound: today.outbound, otp: today.otpNotif, inbound: today.inbound, answered: today.answered, used: (usageToday() || { voice: today.creditsUsedVoice }).voice, failed: today.failed, failed503: today.failed503 };
   } else {
     const days = range === '7d' ? series.slice(-7) : series;
     const sum = (k) => days.reduce((s, d) => s + d[k], 0);
@@ -184,7 +185,7 @@ function tilesActive(ctx) {
     ${creditsTile(ctx, own, avg)}
     ${tile(ctx, 'calls', fmt.int(st.calls), t('tile.callsLine', { out: fmt.int(st.outbound), otp: fmt.int(st.otp), inb: fmt.int(st.inbound) }), `#/logs?range=${range}`)}
     ${tile(ctx, 'answered', fmt.pct(range === 'today' && !subId ? today.answerRatePct : pctOf(st.answered, st.calls)), t('tile.answeredLine', { a: fmt.int(st.answered), b: fmt.int(st.calls) }), `#/reports?range=${range}`, 'answer_rate')}
-    ${tile(ctx, 'used', fmt.int(st.used), range === 'today' ? t('tile.usedLine', { voice: fmt.int(today.monthVoice), all: fmt.int(today.monthAll) }) : t('tile.usedRange'), '#/billing?section=usage', null, range === 'today' ? 'tile.usedToday' : null)}
+    ${tile(ctx, 'used', fmt.int(st.used), range === 'today' ? t('tile.usedLine', { voice: fmt.int((usageMonth() || { voice: today.monthVoice }).voice), all: fmt.int((usageMonth() || { total: today.monthAll }).total) }) : t('tile.usedRange'), '#/billing?section=usage', null, range === 'today' ? 'tile.usedToday' : null)}
     ${tile(ctx, 'failed', fmt.pct(range === 'today' && !subId ? today.failedPct : pctOf(st.failed, st.calls)), t('tile.failedLine', { n: fmt.int(st.failed), sip: fmt.int(st.failed503) }), `#/logs?status=failed&range=${range}`)}
   </div>`;
 }
@@ -294,14 +295,14 @@ function liveCalls(ctx) {
 
 function spendCard(ctx) {
   const { t, fmt, html: h, icon } = ctx;
-  const today = ctx.store.get('today');
+  const today = usageToday() || { total: 0, voice: 0, other: 0 }; // = Billing › Used today, in every billing mode
   const lim = ctx.store.get('limits');
-  const used = today.creditsUsedVoice + today.creditsUsedOther;
+  const used = today.total;
   const pct = Math.min(100, Math.round((used / lim.daily) * 100));
   return h`<div class="card ov-spend"><div class="card-head"><h2>${t('spend.title')}</h2><button type="button" class="btn btn-sm" data-action="ov.spend.edit">${icon('edit')}${t('spend.edit')}</button></div>
     <div class="card-body stack"><div class="row" style="align-items:baseline;gap:6px"><span class="ov-big tnum">${fmt.int(used)}</span><span class="hint">/ ${fmt.int(lim.daily)}</span></div>
     <span class="progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${t('spend.title')}"><i style="width:${pct}%"></i></span>
-    <span class="hint-xs">${t('spend.line', { voice: fmt.int(today.creditsUsedVoice), other: fmt.int(today.creditsUsedOther) })}</span>
+    <span class="hint-xs">${t('spend.line', { voice: fmt.int(today.voice), other: fmt.int(today.other) })}</span>
     <span class="hint-xs">${t('spend.block')}</span>
     <p class="row-tight hint-xs ov-onebal" data-inv="ov.oneBalance">${icon('coin', 'ico-xs')}<span><strong>${t('spend.oneBalance')}</strong> · ${t('spend.oneBalanceLine')}</span></p></div></div>`;
 }
@@ -347,10 +348,12 @@ function recentCard(ctx) {
 function alertBanner(ctx) {
   const { t, html: h, icon } = ctx;
   const a = ctx.store.get('today.alert');
+  // The incident window is the status page's (one set of times on every screen); the alert itself measures 15 minutes.
+  const inc = (ctx.store.get('incidents') || []).find((x) => x.date === '2026-10-27') || { from: a && a.from, to: a && a.resolvedAt };
   if (!a || a.acknowledged) return '';
   const c = (ctx.store.get('campaigns') || []).find((x) => x.id === a.campaign);
   return h`<div class="note note-warn ov-alert" role="status">${icon('alert')}
-    <div class="grow"><strong>${t('alert.title', { pct: a.pct })}</strong> · ${t('alert.body', { failed: a.failed, of: a.of, from: a.from, to: a.to, campaign: c ? ctx.loc(c.name) : '', threshold: a.threshold, resolved: a.resolvedAt })}</div>
+    <div class="grow"><strong>${t('alert.title', { pct: a.pct })}</strong> · ${t('alert.body', { failed: a.failed, of: a.of, from: inc.from, to: inc.to, campaign: c ? ctx.loc(c.name) : '', threshold: a.threshold, resolved: a.resolvedAt })}</div>
     <div class="row"><a class="btn btn-sm" href="#/logs?status=failed&src=${a.campaign}&range=24h" data-action="ov.alert.logs">${t('alert.logs')}</a>
     <a class="btn btn-sm" href="#/alerts" data-action="ov.alert.rules">${t('alert.rules')}</a>
     <button type="button" class="btn btn-sm btn-ghost" data-action="ov.alert.ack">${t('alert.ack')}</button></div></div>`;

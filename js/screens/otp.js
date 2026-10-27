@@ -6,6 +6,7 @@
 // the daily series in js/data/active.js (7 days: 1,342 sent · 1,171 answered · 1,159.29 credits).
 
 import { raw, reducedMotion } from '../core/dom.js';
+import { replaceSafely } from '../core/press.js';
 import { addCall, newId, audit } from '../core/actions.js';
 import { tIn, getLang, LANGS, LANG_ORDER, loc } from '../core/i18n.js';
 import { store } from '../core/store.js';
@@ -101,6 +102,19 @@ function genderIssue(lang, gender, text) {
   return null;
 }
 const fixParticles = (gender, text) => (gender === 'female' ? String(text).replace(/ครับ/g, 'ค่ะ') : String(text).replace(/ค่ะ|คะ/g, 'ครับ'));
+
+// Anti-scam line (T2 audit #3): every built-in and new template says it; the editor flags a text without it.
+const scamLine = (type, lang) => tIn(lang, type === 'otp' ? 'otp.scam.otp' : 'otp.scam.alert');
+/** Does the text (in a language) contain the anti-scam line? {brand} or {clinic} both count as the sender. */
+function hasScamLine(type, text, lang) {
+  if (text == null) return true;
+  const vars = sampleVars(lang);
+  const flat = (s) => String(s).replace(/\s+/g, ' ');
+  const filled = flat(fillVars(text, vars));
+  const lines = type === 'otp' ? [scamLine('otp', lang)] : [scamLine('alert', lang), scamLine('otp', lang)];
+  return lines.some((l) => [l, l.replace(/\{brand\}/g, '{clinic}')].some((x) => filled.includes(flat(fillVars(x, vars)))));
+}
+const newText = (type, lang) => tIn(lang, type === 'otp' ? 'otp.tpl.newOtp' : 'otp.tpl.newAlert');
 
 /** Pick the voice and decide what may be spoken: typed text only by an on-device voice. */
 function planVoice(ctx, lang, premium, edited) {
@@ -560,14 +574,6 @@ export function render(ctx) {
 
 // ---------- template editor (modal) ----------
 
-// A re-render on focusout must not swap a button between its mousedown and its click (the click would be lost).
-// While a pointer is down, the re-render waits until the click has run.
-const POINTER = { down: false, after: null };
-if (typeof document !== 'undefined' && !window.__cpPointerHookOtp) {
-  window.__cpPointerHookOtp = true;
-  document.addEventListener('pointerdown', () => { POINTER.down = true; }, true);
-  document.addEventListener('pointerup', () => { POINTER.down = false; setTimeout(() => { const f = POINTER.after; POINTER.after = null; if (f) f(); }, 0); }, true);
-}
 let ED = null; // editor state
 /** Unsaved editor states kept after closing (per template; 'new' for a new one), so closing never loses work. */
 const KEPT = new Map();
@@ -621,7 +627,6 @@ function openEditor(ctx, tplId, { restore = null } = {}) {
     if (ev.target.matches('[data-ed="text"]')) ED.caret = { start: ev.target.selectionStart, end: ev.target.selectionEnd, lang: ED.lang };
     if (ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest('.ot-var')) return;
     if (!ev.target.matches('[data-ed="text"], [data-ed="name"]')) return;
-    if (POINTER.down) { POINTER.after = () => redrawEditor(ctx); return; }
     redrawEditor(ctx);
   });
   return m;
@@ -688,8 +693,13 @@ function saveTemplate(ctx, status, version) {
 function redrawEditor(ctx) {
   // Re-entrancy: replacing the body blurs the focused field, whose focusout would redraw again mid-replace.
   if (!ED || !ED.handle || ED.redrawing) return;
-  ED.redrawing = true;
-  try { redrawEditorNow(ctx); } finally { if (ED) ED.redrawing = false; }
+  // A redraw asked for while a control of the editor is being pressed waits for its click (core/press.js).
+  const h = ED.handle;
+  replaceSafely(h.body, () => {
+    if (!ED || ED.handle !== h || ED.redrawing) return;
+    ED.redrawing = true;
+    try { redrawEditorNow(ctx); } finally { if (ED) ED.redrawing = false; }
+  });
 }
 function redrawEditorNow(ctx) {
   const focus = document.activeElement && ED.handle.el.contains(document.activeElement) ? { sel: document.activeElement.dataset.ed ? `[data-ed="${document.activeElement.dataset.ed}"]` : document.activeElement.dataset.action ? `[data-action="${document.activeElement.dataset.action}"]${document.activeElement.dataset.value != null ? `[data-value="${document.activeElement.dataset.value}"]` : ''}` : null, caret: document.activeElement.selectionStart } : null;
@@ -746,7 +756,9 @@ function editorBody(ctx) {
         ${gi ? h`<div class="note note-warn" role="status">${icon('alert')}<span class="grow">${t(gi === 'female' ? 'ed.genderF' : 'ed.genderM')}</span>${ro ? '' : h`<button type="button" class="btn btn-sm" data-action="ot.ed.fix">${t('ed.fix')}</button>`}</div>` : ''}
         <div class="card card-sunken card-pad stack" style="gap:6px"><span class="label">${t('ed.preview')}</span><p class="ot-say" lang="${LANGS[e.lang].html}" data-ed-say>${preview}</p>
           <div class="row"><button type="button" class="btn btn-sm ${e.playing ? '' : 'btn-navy'}" data-action="ot.ed.play">${icon(e.playing ? 'stop' : 'play', 'ico-sm')}${e.playing ? t('ed.stop') : t('ed.play')}</button>
-          ${e.note ? h`<span class="hint-xs" role="status">${e.note}</span>` : ''}</div></div>`}
+          ${e.note ? h`<span class="hint-xs" role="status">${e.note}</span>` : ''}</div>
+          ${hasScamLine(e.type, text, e.lang) ? h`<div><span class="chip chip-ok ot-scam is-ok" tabindex="0" data-tip-key="otp.ed.scamTip">${icon('shield-check', 'ico-sm')}${t('ed.scamOk')}</span></div>`
+            : h`<div class="note note-warn ot-scam is-missing" role="status">${icon('alert')}<span class="grow">${t('ed.scamMissing')} <q lang="${LANGS[e.lang].html}">${fillVars(scamLine(e.type, e.lang), sampleVars(e.lang))}</q></span>${ro ? '' : h`<button type="button" class="btn btn-sm" data-action="ot.ed.scam">${t('ed.scamAdd')}</button>`}</div>`}</div>`}
     </div>
     <aside class="ot-ed-side stack-3">
       <div class="field"><span class="label" id="ot-ed-voice-l">${ctx.term(t('ed.voice'), 'voice_tier')}</span><select class="select" data-ed="voice" data-action="ot.ed.voice" aria-labelledby="ot-ed-voice-l" ${raw(ro ? 'disabled' : '')}>${['standard-female', 'standard-male', 'premium-female', 'premium-male'].map((v) => { const [tier, g] = v.split('-'); return h`<option value="${v}" ${raw(e.tier === tier && e.gender === g ? 'selected' : '')}>${t(`voice.${tier}`)} · ${t(`gender.${g}`)}${tier === 'premium' ? ` ${t('ed.premiumOpt', { rate: fmt.rate(PRICES.premiumVoice) })}` : ''}</option>`; })}</select>
@@ -768,7 +780,20 @@ function editorBody(ctx) {
 function editorActions(ctx) {
   const { t } = ctx;
   return {
-    'ot.ed.type': (el) => { ED.type = el.dataset.value; ED.dirty = true; redrawEditor(ctx); },
+    'ot.ed.type': (el) => {
+      const was = ED.type;
+      ED.type = el.dataset.value;
+      // A new template still holding the starting text of the other type gets this type's starting text.
+      if (ED.isNew && was !== ED.type) for (const l of LANG_ORDER) if (ED.texts[l] != null && ED.texts[l] === newText(was, l)) ED.texts[l] = newText(ED.type, l);
+      ED.dirty = true; redrawEditor(ctx);
+    },
+    'ot.ed.scam': () => {
+      const cur = String(ED.texts[ED.lang] || '').trim();
+      const line = scamLine(ED.type, ED.lang);
+      ED.texts[ED.lang] = cur ? `${cur}${ED.lang === 'zh' ? '' : ' '}${line}` : line;
+      ED.dirty = true;
+      redrawEditor(ctx);
+    },
     'ot.ed.lang': (el) => { stopAudio(); ED.playing = false; ED.lang = el.dataset.value; redrawEditor(ctx); },
     'ot.ed.addlang': () => {
       const l = ED.lang;
@@ -953,7 +978,7 @@ export function mount(root, ctx) {
     prHookUrl: (v) => { ctx.state.protect.hookUrl = v; ctx.state.protect.dirty = true; },
   });
   // The Save button reflects changes made in the number fields.
-  ctx.on(root, 'focusout', '[data-field^="pr"]', () => { if (POINTER.down) { POINTER.after = () => { if (isOtp()) ctx.rerender(); }; return; } ctx.rerender(); });
+  ctx.on(root, 'focusout', '[data-field^="pr"]', () => ctx.rerender());
   ctx.on(root, 'keydown', '[data-field="verifyIn"]', (ev) => {
     if (ev.key !== 'Enter' || ev.isComposing || ev.keyCode === 229) return;
     ev.preventDefault();

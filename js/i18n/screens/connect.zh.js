@@ -1,7 +1,7 @@
 // 连接 — "connect.<key>"
 export default {
   title: '连接',
-  sub: '两种接入方式。大多数团队在 10 分钟内完成首次通话。',
+  sub: '两种接入方式。约 10 分钟即可设置好首次通话。',
   'crumb.api': 'HTTP API',
   'crumb.sip': 'SIP 中继',
   'cmd.trunk': '创建 SIP 中继',
@@ -81,7 +81,7 @@ export default {
   'api.evSig': '如何校验签名',
   'api.evCopy': '复制数据',
   'prices.title': '价格',
-  'prices.line': '呼出每分钟 {out} · 呼入每分钟 {inb} · OTP 每通接听 {otp} · 号码每月 {number} · SIP 与 API 同一价格',
+  'prices.line': '呼出每分钟 {out} · 呼入每分钟 {inb} · OTP 每通接听 {otp} · 号码每月 {number} · SIP 与 API 同一价格。通话自接听起按开始的每分钟计费。1 分钟以内的 OTP 和通知电话按每通接听电话一个价格。未接听的电话免费。',
   'prices.plans': '用量套餐每月 {min} 分钟起（12 个月）· 合作伙伴与批发：请联系销售',
   'prices.all': '查看全部价格',
 

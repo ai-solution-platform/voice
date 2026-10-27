@@ -302,7 +302,7 @@ const PAGE = 40;
 const REQ_5XX = 2;
 const OLD_KEY_401 = 24; // the revoked key old-pos still polls once an hour → 24 of the day's 4xx
 const RQ_STATUS = ['all', '2xx', '4xx', '5xx'];
-const HTTP_TEXT = { 200: 'OK', 201: 'Created', 401: 'Unauthorized', 403: 'Forbidden', 409: 'Conflict', 422: 'Unprocessable Entity', 429: 'Too Many Requests', 503: 'Service Unavailable' };
+const HTTP_TEXT = { 200: 'OK', 201: 'Created', 401: 'Unauthorized', 402: 'Payment Required', 403: 'Forbidden', 409: 'Conflict', 422: 'Unprocessable Entity', 429: 'Too Many Requests', 503: 'Service Unavailable' };
 const KEY_IP = { 'app-backend': ['203.0.113.10', '203.0.113.11'], 'delivery-system': ['198.51.100.23'], 'old-pos': ['198.51.100.77'] };
 const CRM_HOOK = 'https://crm.example.com/ants/webhook';
 const C1 = 'bc_01JBK7C1Q2';
@@ -314,7 +314,7 @@ const callBody = (to, say = SAY_ETA, extra = {}) => ({ from: '+662xxx1001', to, 
 // The day's latest 4xx: [time, method, path, status, code, key, body]
 const SAMPLE_4XX = [
   ['14:33:12', 'POST', '/voice/otp', 422, 'VOICE_4220', 'app-backend', { to: '+6681xxx12', template: 'otp-login', lang: 'th-TH' }],
-  ['14:21:40', 'POST', '/voice/calls', 409, 'VOICE_4213', 'delivery-system', callBody('+6689xxx3021')],
+  ['14:24:10', 'POST', '/voice/calls', 402, 'VOICE_4206', 'delivery-system', callBody('+6689xxx3021')],
   ['14:00:00', 'GET', '/voice/calls?limit=50', 401, 'HTTP 401', 'old-pos', null],
   ['13:47:05', 'POST', '/voice/calls', 403, 'VOICE_4204', 'delivery-system', callBody('+6698xxx3345')],
   ['13:00:00', 'GET', '/voice/calls?limit=50', 401, 'HTTP 401', 'old-pos', null],
@@ -328,7 +328,7 @@ const SAMPLE_4XX = [
 ];
 const SAMPLE_5XX = [
   ['03:12:44', 'POST', '/voice/otp', 503, 'app-backend', { to: '+6662xxx4410', template: 'otp-login', lang: 'th-TH' }],
-  ['03:12:41', 'POST', '/voice/otp', 503, 'app-backend', { to: '+6662xxx4410', template: 'otp-login', lang: 'th-TH' }],
+  ['14:21:40', 'POST', '/voice/calls', 503, 'delivery-system', callBody('+6689xxx3021'), 'VOICE_4213'],
 ];
 
 function keyRef(ctx, name) {
@@ -407,8 +407,10 @@ function requestsList(ctx) {
     r.res = { ...err, request_id: r.id };
     out.push(r);
   });
-  SAMPLE_5XX.forEach(([hms, method, path, status, keyName, body], i) => {
-    const r = mkReq({ at: atTime(hms) + i * 91, method, path, status, ms: 31 - i * 2, key: app, ip: KEY_IP[keyName][i % 2], body, err: { error: 'service_unavailable', detail: 'Temporarily unavailable. Nothing was created; safe to retry.' } });
+  SAMPLE_5XX.forEach(([hms, method, path, status, keyName, body, code], i) => {
+    const key = keyName === 'app-backend' ? app : dv;
+    const err = code ? { error: code, detail: errEn(code) } : { error: 'service_unavailable', detail: 'Temporarily unavailable. Nothing was created; safe to retry.' };
+    const r = mkReq({ at: atTime(hms) + i * 91, method, path, status, ms: 31 - i * 2, key, ip: KEY_IP[keyName][0], code, body, err });
     r.res = { ...r.err, request_id: r.id };
     out.push(r);
   });

@@ -69,7 +69,7 @@ export default {
   'col.actions': 'Actions',
 
   'empty.title': 'Connect your office phone system',
-  'empty.body': 'A SIP trunk lets your PBX (FreePBX, 3CX, Asterisk, Yeastar) call out and receive calls through ANTS. Most teams finish in about 10 minutes.',
+  'empty.body': 'A SIP trunk lets your PBX (FreePBX, 3CX, Asterisk, Yeastar) call out and receive calls through ANTS. Plan about 10 minutes for the setup if your firewall is ready.',
   'empty.s1': 'Tell us how many calls at the same time you need',
   'empty.s2': 'Copy our server details into your PBX',
   'empty.s3': 'We check the connection live, then you activate',

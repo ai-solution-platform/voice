@@ -13,6 +13,7 @@ import { html, raw, el as toEl, on, uid, effect } from '../core/dom.js';
 import { t } from '../core/i18n.js';
 import { pushLayer, layersRoot, animateIn, animateOut } from './overlay.js';
 import { icon } from './icons.js';
+import { replaceSafely } from '../core/press.js';
 
 function buttonsHTML(buttons = []) {
   return buttons.map((b, i) => html`<button type="button" class="btn ${b.kind ? 'btn-' + b.kind : ''} ${b.left ? 'left' : ''}" data-mbtn="${i}" ${raw(b.action ? `data-action="${String(b.action).replace(/[^\w.:-]/g, '')}"` : '')} ${raw(b.id ? `id="${b.id}"` : '')} ${raw(b.disabled ? 'aria-disabled="true"' : '')}>${b.icon ? icon(b.icon) : ''}${b.label}</button>`);
@@ -51,13 +52,16 @@ function open(kind, opts) {
       if (onClose) onClose(result);
       resolveClosed(result);
     },
-    setBody(content) { panel.querySelector('.modal-body').innerHTML = String(content); },
+    // Both wait for a click that is half-way through on a control they would replace (core/press.js).
+    setBody(content) { const b = panel.querySelector('.modal-body'); const s = String(content); replaceSafely(b, () => { b.innerHTML = s; }); },
     setTitle(text) { panel.querySelector(`#${id}-t`).textContent = text; },
     setButtons(list) {
-      currentButtons = list;
       const foot = panel.querySelector('.modal-foot');
-      foot.innerHTML = String(html`${buttonsHTML(list)}`);
-      foot.hidden = !list.length;
+      replaceSafely(foot, () => {
+        currentButtons = list;
+        foot.innerHTML = String(html`${buttonsHTML(list)}`);
+        foot.hidden = !list.length;
+      });
     },
   };
   offs.push(on(panel, 'click', '[data-mclose]', (ev) => { ev.__handled = true; handle.close(); }));

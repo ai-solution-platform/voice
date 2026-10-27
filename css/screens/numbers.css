@@ -93,6 +93,13 @@
 .nm-onfile { flex-direction: column; width: 100%; cursor: pointer; }
 .nm-onfile input { width: 16px; height: 16px; accent-color: var(--orange); }
 .nm-consent { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r); background: var(--sunken); }
+/* checklist items 4–5: how the number is used · power of attorney */
+.nm-doc.is-skip { background: var(--sunken); }
+.nm-doc.is-skip .nm-doc-ico { background: var(--border); color: var(--slate); }
+.nm-use-f { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.8fr); gap: 10px; padding-left: 40px; }
+.nm-use-f .field { min-width: 0; }
+.nm-use-note, .nm-poa-dir { padding-left: 40px; }
+.nm-poa-dir { font-size: var(--fs-sm); }
 .nm-pay { gap: 6px; position: sticky; top: calc(var(--topbar-h) + 12px); }
 .nm-pay .nm-order { margin-top: 8px; white-space: normal; text-align: center; }
 .nm-rev .card-head { padding: 10px var(--s-4); }
@@ -122,6 +129,8 @@
   .nm-sel { flex: 1 1 140px; }
   .nm-results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .nm-doc-b { padding-left: 0; }
+  .nm-use-f { grid-template-columns: minmax(0, 1fr); padding-left: 0; }
+  .nm-use-note, .nm-poa-dir { padding-left: 0; }
   .nm-buyfoot .hint-xs { flex-basis: 100%; order: 3; text-align: left; }
 }
 

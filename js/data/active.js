@@ -207,9 +207,11 @@ export const CAMPAIGNS = [
     sub: SUBS.dv, callerId: '02-xxx-1001', purpose: 'service', status: 'running', progressPct: 62, startedAt: isoAt('12:30'), startedBy: 'Kamol Rakngan', expectedFinish: isoAt('15:40'),
     file: 'delivery_slots_27oct.csv', rows: 1208, duplicates: 37, dnc: 21, toCall: 1150, messageSec: 22, keys: { 1: 'confirm', 2: 'staff', 9: 'opt-out' },
     hours: 'Mon–Sat 09:00–18:00', retries: 2, retryAfterMin: 30, cps: 2, concurrent: 20, concurrentNow: 16,
-    estimate: { max: 1483.5, expected: 949.44, expectedPct: 64 },
-    progress: { dialled: 713, answered: 456, noAnswer: 143, phoneOff: 40, busy: 58, failed: 47, failed503: 26, failed404: 21, inProgress: 9, queued: 437, retriesWaiting: 168 },
-    keysPressed: { 1: 318, 2: 52, 9: 7, none: 79 }, billedMin: 593, credits: 764.97,
+    // Expected at launch = the last similar campaign (26 Oct): 55.5 % answered × 2.09 credits per answered call.
+    estimate: { max: 1483.5, expected: 1333.94, expectedPct: 55.5 },
+    // So far 387 of 704 finished = 55.0 % answered; transfers (key 2) carry the extra minutes: 593 billed min = 764.97.
+    progress: { dialled: 713, answered: 387, noAnswer: 212, phoneOff: 40, busy: 58, failed: 47, failed503: 26, failed404: 21, inProgress: 9, queued: 437, retriesWaiting: 219 },
+    keysPressed: { 1: 270, 2: 44, 9: 6, none: 67 }, billedMin: 593, credits: 764.97,
     recipients: [
       { phone: '081-xxx-4821', name: 'Waraporn', status: 'completed', key: '1', sec: 38, credits: 1.29 },
       { phone: '087-xxx-8156', name: 'Pim', status: 'completed', key: '2', transferred: true, sec: 205, credits: 5.16 },
@@ -226,27 +228,27 @@ export const CAMPAIGNS = [
     sub: SUBS.ck, callerId: '02-xxx-1002', purpose: 'reminder', status: 'completed', startedAt: isoOn('2026-10-26', '10:00'), finishedAt: isoOn('2026-10-26', '11:42'),
     rows: 433, duplicates: 16, dnc: 7, toCall: 410, messageSec: 24, keys: { 1: 'confirm', 2: 'sms-link', 9: 'opt-out' },
     hours: 'Mon–Sat 09:00–18:00', retries: 2, retryAfterMin: 30, cps: 2, concurrent: 20,
-    estimate: { max: 528.9, expected: 381 }, result: { answered: 296, answeredPct: 72.2, noAnswer: 76, busy: 28, failed: 10 },
-    keysPressed: { 1: 233, 2: 46, 9: 3, none: 14 }, billedMin: 296, credits: 381.84,
+    estimate: { max: 528.9, expected: 290.9, expectedPct: 55 }, result: { answered: 226, answeredPct: 55.1, noAnswer: 146, busy: 28, failed: 10 },
+    keysPressed: { 1: 178, 2: 35, 9: 2, none: 11 }, billedMin: 226, credits: 291.54,
   },
   {
     id: 'bc_01JBKR28XP', code: 'C3', name: { en: 'Prescription ready for pickup · 28 Oct', th: 'แจ้งรับยา · 28 ต.ค.', zh: '取药通知 · 10月28日' },
     sub: SUBS.ck, callerId: '02-xxx-1002', purpose: 'service', status: 'scheduled', scheduledFor: isoOn('2026-10-28', '10:00'),
     rows: 146, duplicates: 3, dnc: 1, toCall: 142, messageSec: 15, keys: { 1: 'repeat' }, hours: 'Mon–Sat 09:00–18:00', retries: 2, retryAfterMin: 30, cps: 2, concurrent: 10,
-    estimate: { max: 183.18, expected: 128.23, expectedPct: 70 },
+    estimate: { max: 183.18, expected: 100.93, expectedPct: 55.1 },
   },
   {
     id: 'bc_01JBKF7V3N', code: 'C4', name: { en: 'Flu vaccine appointment reminder · Nov', th: 'แจ้งเตือนนัดฉีดวัคซีนไข้หวัดใหญ่ · พ.ย.', zh: '流感疫苗预约提醒 · 11月' },
     sub: SUBS.ck, callerId: '02-xxx-1002', purpose: 'reminder', status: 'draft', savedAt: '2026-10-26', savedBy: 'Preecha Mongkol',
     file: 'flu_vaccine_nov.csv', rows: 2000, duplicates: 86, dnc: 40, toCall: 1874, messageSec: 26, keys: { 1: 'confirm', 2: 'sms-link', 9: 'opt-out' },
     hours: 'Mon–Sat 09:00–18:00', retries: 2, retryAfterMin: 30, cps: 2, concurrent: 20,
-    // Launch: up to 2,417.46 · expected ≈ 1,745.41 (72.2% = C2's answer rate) · typed token "1874"
-    estimate: { max: 2417.46, expected: 1745.41, expectedPct: 72.2, balanceAfter: 19851.23, balanceAfterMax: 19179.18, dailyAfter: 4613.48 },
-    simulatedResult: { answered: 1353, answeredPct: 72.2, noAnswer: 338, busy: 121, failed: 62, keysPressed: { 1: 1067, 2: 214, 9: 11, none: 61 }, credits: 1745.37, balanceAfter: 19851.27 },
+    // Launch: up to 2,417.46 · expected ≈ 1,332.02 (55.1% = C2's answer rate) · typed token "1874"
+    estimate: { max: 2417.46, expected: 1332.02, expectedPct: 55.1, balanceAfter: 20264.62, balanceAfterMax: 19179.18, dailyAfter: 4613.48 },
+    simulatedResult: { answered: 1033, answeredPct: 55.1, noAnswer: 657, busy: 122, failed: 62, keysPressed: { 1: 816, 2: 163, 9: 8, none: 46 }, credits: 1332.57, balanceAfter: 20264.07 },
     confirmToken: '1874',
   },
-  { id: 'bc_01JBHD26OC', name: { en: 'Delivery slot confirmation · 26 Oct', th: 'ยืนยันเวลาส่งสินค้า · 26 ต.ค.', zh: '确认送货时段 · 10月26日' }, sub: SUBS.dv, callerId: '02-xxx-1001', purpose: 'service', status: 'completed', toCall: 696, result: { answered: 412, answeredPct: 59.2 }, credits: 804.96, startedAt: isoOn('2026-10-26', '12:30') },
-  { id: 'bc_01JBFD24OC', name: { en: 'Delivery slot confirmation · 24 Oct', th: 'ยืนยันเวลาส่งสินค้า · 24 ต.ค.', zh: '确认送货时段 · 10月24日' }, sub: SUBS.dv, callerId: '02-xxx-1001', purpose: 'service', status: 'completed', toCall: 619, result: { answered: 396, answeredPct: 64.0 }, credits: 664.35, startedAt: isoOn('2026-10-24', '12:30') },
+  { id: 'bc_01JBHD26OC', name: { en: 'Delivery slot confirmation · 26 Oct', th: 'ยืนยันเวลาส่งสินค้า · 26 ต.ค.', zh: '确认送货时段 · 10月26日' }, sub: SUBS.dv, callerId: '02-xxx-1001', purpose: 'service', status: 'completed', toCall: 696, result: { answered: 386, answeredPct: 55.5 }, credits: 804.96, startedAt: isoOn('2026-10-26', '12:30') },
+  { id: 'bc_01JBFD24OC', name: { en: 'Delivery slot confirmation · 24 Oct', th: 'ยืนยันเวลาส่งสินค้า · 24 ต.ค.', zh: '确认送货时段 · 10月24日' }, sub: SUBS.dv, callerId: '02-xxx-1001', purpose: 'service', status: 'completed', toCall: 619, result: { answered: 350, answeredPct: 56.5 }, credits: 664.35, startedAt: isoOn('2026-10-24', '12:30') },
 ];
 
 // ---------- live calls (14 live, 6 shown) ----------
@@ -337,9 +339,10 @@ export const REPORTS_7D = {
   ],
   bySub: [
     { sub: S.dv, calls: 5968, billedMin: 6007, notifCalls: 257, credits: 8003.46, share: 52 },
-    { sub: S.hq, calls: 2884, billedMin: 5492, credits: 5854.38, share: 38 },
+    { sub: S.hq, calls: 2884, billedMin: 5562, credits: 5944.68, share: 39 },
     { sub: S.app, calls: 1044, billedMin: null, otpAnswered: 914, credits: 904.86, share: 6 },
-    { sub: S.ck, calls: 559, billedMin: 668, credits: 504.64, share: 3 },
+    // Clinic = health check campaign C2 (410 calls · 226 billed min · 291.54) + the clinic menu (149 inbound calls).
+    { sub: S.ck, calls: 559, billedMin: 598, credits: 414.34, share: 3 },
   ],
 };
 
@@ -405,7 +408,7 @@ export const NOTIFICATIONS = [
   { id: 'ntf_fail', type: 'failureRate', at: isoAt('14:23'), read: false, href: 'alerts', vars: { pct: 27, window: 15, campaign: C1 } },
   { id: 'ntf_ticket', type: 'ticketReply', at: isoAt('14:20'), read: false, href: 'help/tickets/SUP-10452', vars: { ticket: 'SUP-10452' } },
   { id: 'ntf_trunk', type: 'trunkDown', at: isoAt('13:58'), read: false, href: 'trunks/cm-branch-pbx', vars: { trunk: 'cm-branch-pbx' } },
-  { id: 'ntf_camp', type: 'campaignFinished', at: isoOn('2026-10-26', '11:42'), read: true, href: 'campaigns/bc_01JBJ9HC2W', vars: { campaign: 'bc_01JBJ9HC2W', pct: 72 } },
+  { id: 'ntf_camp', type: 'campaignFinished', at: isoOn('2026-10-26', '11:42'), read: true, href: 'campaigns/bc_01JBJ9HC2W', vars: { campaign: 'bc_01JBJ9HC2W', pct: 55 } },
   { id: 'ntf_order', type: 'numberOrdered', at: isoOn('2026-10-26', '10:15'), read: true, href: 'numbers?n=num_01JB3A1004', vars: { number: '02-xxx-1004' } },
   { id: 'ntf_wh', type: 'webhookFailing', at: isoOn('2026-10-24', '16:41'), read: true, href: 'keys?section=webhooks', vars: { host: 'crm.example.com', n: 6 } },
   { id: 'ntf_plans', type: 'plansNew', at: isoOn('2026-10-20', '09:00'), read: true, href: 'help/whats-new' },

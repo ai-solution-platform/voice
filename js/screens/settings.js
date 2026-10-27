@@ -3,6 +3,8 @@
 // recording notice in TH · EN · ZH with Listen, retention, data location), notifications (event × channel matrix,
 // LINE group, the one alert webhook with "Send test") and security (2-step sign-in policy, console IP allow-list,
 // session timeout). Edits collect in a draft; a sticky bar offers Discard / Save, and leaving asks first.
+// Compliance also holds the industry preset new campaigns start with (planned): with Healthcare the recording notice
+// is locked on. The public-holiday list is the shared demo list (js/data/holidays.js).
 // Event webhooks live only in API keys & Webhooks — Settings links there.
 
 import { html as h, raw, reducedMotion } from '../core/dom.js';
@@ -10,6 +12,7 @@ import { audit, isActive } from '../core/actions.js';
 import { tIn, LANGS } from '../core/i18n.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES } from '../data/prices.js';
+import { holidaysFrom, ymdOf, HOLIDAY_RANGE } from '../data/holidays.js';
 
 export const id = 'settings';
 export const nav = { group: 'account', icon: 'settings', labelKey: 'nav.settings' };
@@ -20,6 +23,9 @@ export const css = true;
 const TABS = ['general', 'compliance', 'notifications', 'security'];
 const EVENTS = ['lowCredits', 'limitReached', 'failureRate', 'trunkDown', 'documents', 'campaignFinished', 'ticketUpdates'];
 const CHANNELS = ['email', 'line', 'webhook'];
+/** Industry presets (planned) — the same four as campaign step 1; their rules are the campaigns screen's strings. */
+const PRESETS = ['general', 'payment', 'healthcare', 'insurance'];
+const PRESET_RULES = { general: 2, payment: 4, healthcare: 3, insurance: 4 };
 const TIMES = Array.from({ length: 31 }, (_, i) => { const m = 6 * 60 + i * 30; return `${String(Math.floor(m / 60)).padStart(2, '0')}:${m % 60 ? '30' : '00'}`; });
 const IP_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}(\/(3[0-2]|[12]?\d))?$/;
 
@@ -49,7 +55,7 @@ function defaults(ctx) {
   const nums = ctx.list('numbers').filter((n) => n.status === 'active');
   return {
     general: { name: ctx.loc(ctx.store.get('org.name')), tz: 'Asia/Bangkok', lang: 'en', cid: active ? '02-xxx-1001' : (nums[0] ? nums[0].number : ''), sub: 'sub_01JB2HQ000', ring: 30, voice: 'th' },
-    compliance: { wdFrom: '08:00', wdTo: '20:00', weFrom: '08:00', weTo: '18:00', holidays: true, recOn: true, recStop: true, retention: PRICES.recordingDays, purpose: 'reminder', cap: 1 },
+    compliance: { preset: 'general', wdFrom: '08:00', wdTo: '20:00', weFrom: '08:00', weTo: '18:00', holidays: true, recOn: true, recStop: true, retention: PRICES.recordingDays, purpose: 'reminder', cap: 1 },
     notifications: { matrix, webhook: ch.webhook || '' },
     security: { twofa: 'admins', ips: '', timeout: '8h' },
   };
@@ -130,6 +136,18 @@ function webhooksLink(ctx) {
   return h`<div class="note note-info st-wh">${icon('link')}<span class="grow">${t('wh.note')}</span><a class="btn btn-sm" href="#/keys" data-action="st.webhooks">${t('wh.open')}</a></div>`;
 }
 
+/** Industry presets (planned): the preset new campaigns start with. Rules are the campaigns screen's strings. */
+function presetCard(ctx, c) {
+  const { t, icon } = ctx;
+  const p = PRESETS.includes(c.preset) ? c.preset : 'general';
+  const rules = Array.from({ length: PRESET_RULES[p] }, (_, i) => t(`campaigns.pre.${p}.r${i + 1}`));
+  return h`<section class="card" aria-labelledby="st-pre-h" data-inv="st.preset"><div class="card-head"><h2 id="st-pre-h">${t('pre.title')}</h2></div>
+    <div class="card-body stack-3"><p class="hint-xs">${t('pre.hint')}</p>
+      <div class="st-presets" role="group" aria-labelledby="st-pre-h">${PRESETS.map((x) => h`<button type="button" class="optcard" data-action="st.preset" data-value="${x}" aria-pressed="${p === x}"><span class="t">${t(`campaigns.pre.${x}.t`)}</span><span class="h">${t(`campaigns.pre.${x}.h`)}</span></button>`)}</div>
+      <ul class="st-preset-rules" aria-live="polite">${rules.map((r) => h`<li>${r}</li>`)}</ul>
+      <p class="hint-xs st-preset-check">${icon('alert', 'ico-xs')} ${t('campaigns.pre.check')}</p></div></section>`;
+}
+
 function complianceTab(ctx) {
   const { t, fmt, icon } = ctx;
   const c = cur(ctx).compliance;
@@ -137,7 +155,12 @@ function complianceTab(ctx) {
   const check = ctx.state.check;
   const sel = (field, v, label) => h`<select class="select st-time" data-field="st.hours.${field}" aria-label="${label}">${TIMES.map((x) => opt(x, x, v))}</select>`;
   const notice = tIn(ctx.state.recLang, 'rec.text', undefined, 'settings');
-  return h`
+  // Healthcare: the recording notice cannot be switched off (health details are sensitive personal data).
+  const health = c.preset === 'healthcare';
+  const recOn = c.recOn || health;
+  const upcoming = holidaysFrom(ymdOf(nowMs()));
+  const next = upcoming[0];
+  return h`${presetCard(ctx, c)}
   <section class="card" aria-labelledby="st-dnc-h"><div class="card-head"><h2 id="st-dnc-h">${ctx.term(t('dnc.title'), 'dnc')}</h2>
       <div class="row st-dnc-check"><input class="input" data-field="st.dnc.q" value="${check ? check.q : ''}" placeholder="${t('dnc.checkPh')}" aria-label="${t('dnc.checkAria')}" inputmode="tel">
         <button type="button" class="btn" data-action="st.dnc.check">${icon('search')}${t('dnc.check')}</button></div></div>
@@ -157,13 +180,17 @@ function complianceTab(ctx) {
       <div class="st-hours"><span class="strong">${t('hours.weekdays')}</span><span class="row-tight">${sel('wdFrom', c.wdFrom, t('hours.fromAria', { days: t('hours.weekdays') }))}<span aria-hidden="true">–</span>${sel('wdTo', c.wdTo, t('hours.toAria', { days: t('hours.weekdays') }))}</span></div>
       <div class="st-hours"><span class="strong">${t('hours.weekends')}</span><span class="row-tight">${sel('weFrom', c.weFrom, t('hours.fromAria', { days: t('hours.weekends') }))}<span aria-hidden="true">–</span>${sel('weTo', c.weTo, t('hours.toAria', { days: t('hours.weekends') }))}</span></div>
       ${c.wdFrom >= c.wdTo || c.weFrom >= c.weTo ? h`<span class="field-err">${t('hours.bad')}</span>` : ''}
-      <div class="st-line"><div class="grow"><strong>${t('hours.holidays')}</strong><span class="hint-xs">${t('hours.holidaysHint')}</span></div>${toggle(ctx, 'st.hours.holidays', c.holidays, t('hours.holidays'))}</div>
+      <div class="st-line"><div class="grow"><strong>${t('hours.holidays')}</strong><span class="hint-xs">${t('hours.holidaysHint')}</span>
+          ${c.holidays && next ? h`<span class="hint-xs">${t('hours.listLine', { n: fmt.int(upcoming.length), until: fmt.dateProse(`${HOLIDAY_RANGE.to}T12:00:00+07:00`), next: fmt.dateProse(`${next.date}T12:00:00+07:00`, true), name: ctx.loc(next.name) })}</span>` : ''}</div>
+        ${c.holidays ? h`<button type="button" class="btn btn-sm" data-action="st.hours.list">${icon('calendar')}${t('hours.listBtn')}</button>` : ''}${toggle(ctx, 'st.hours.holidays', c.holidays, t('hours.holidays'))}</div>
       <p class="hint-xs">${t('hours.note')}</p></div></section>
 
   <section class="card" aria-labelledby="st-rec-h"><div class="card-head"><h2 id="st-rec-h">${t('rec.title')}</h2><span class="chip chip-ok" tabindex="0" data-tip-key="settings.loc.tip">${icon('shield-check')}${t('loc.chip')}</span></div>
     <div class="card-body stack-3">
-      <div class="st-line"><div class="grow"><strong>${t('rec.noticeLabel')}</strong><span class="hint-xs">${t('rec.noticeHint')}</span></div>${toggle(ctx, 'st.rec.toggle', c.recOn, t('rec.noticeLabel'))}</div>
-      <div class="st-notice ${c.recOn ? '' : 'is-off'}">
+      <div class="st-line"><div class="grow"><strong>${t('rec.noticeLabel')}</strong><span class="hint-xs">${t('rec.noticeHint')}</span>
+          ${health ? h`<span class="hint-xs st-lock" id="st-rec-lock">${icon('lock', 'ico-xs')} ${t('rec.lockedHealth')}</span>` : ''}</div>
+        ${toggle(ctx, 'st.rec.toggle', recOn, t('rec.noticeLabel'), health ? 'aria-disabled="true" aria-describedby="st-rec-lock"' : '')}</div>
+      <div class="st-notice ${recOn ? '' : 'is-off'}">
         <div class="row" style="justify-content:space-between"><div class="seg seg-sm" role="group" aria-label="${t('rec.langAria')}">${['th', 'en', 'zh'].map((l) => h`<button type="button" data-action="st.rec.lang" data-value="${l}" aria-pressed="${ctx.state.recLang === l}">${LANGS[l].label}</button>`)}</div>
           <button type="button" class="btn btn-sm" data-action="st.rec.listen" aria-pressed="${ctx.state.speaking}">${icon(ctx.state.speaking ? 'stop' : 'play')}${ctx.state.speaking ? t('rec.stopListen') : t('rec.listen')}</button></div>
         <blockquote class="st-quote" lang="${LANGS[ctx.state.recLang].html}">${notice}</blockquote>
@@ -179,8 +206,9 @@ function complianceTab(ctx) {
       <div class="st-line"><div class="grow"><strong id="st-l-purpose">${t('purpose.title')}</strong><span class="hint-xs">${t('purpose.hint')}</span></div>
         <select class="select st-narrow" data-field="st.purpose" aria-labelledby="st-l-purpose">${['reminder', 'service', 'marketing', 'payment'].map((p) => opt(p, t(`purpose.${p}`), c.purpose))}</select></div>
       ${c.purpose === 'payment' ? h`<div class="note note-warn">${icon('alert')}<span>${t('purpose.paymentNote')}</span></div>` : c.purpose === 'marketing' ? h`<div class="note note-warn">${icon('alert')}<span>${t('purpose.marketingNote')}</span></div>` : ''}
-      <div class="st-line"><div class="grow"><strong id="st-l-cap">${t('cap.title')}</strong><span class="hint-xs">${t('cap.hint')}</span></div>
-        <select class="select st-narrow" data-field="st.cap" aria-labelledby="st-l-cap">${[1, 2, 3].map((n) => opt(n, t('cap.n', { count: n }), c.cap))}</select></div>
+      ${c.purpose === 'payment' ? h`<div class="st-line"><div class="grow"><strong>${t('cap.titlePerson')}</strong><span class="hint-xs">${t('cap.locked')}</span></div></div>`
+        : h`<div class="st-line"><div class="grow"><strong id="st-l-cap">${t('cap.title')}</strong><span class="hint-xs">${t('cap.hint')}</span></div>
+        <select class="select st-narrow" data-field="st.cap" aria-labelledby="st-l-cap">${[1, 2, 3].map((n) => opt(n, t('cap.n', { count: n }), c.cap))}</select></div>`}
       <p class="hint-xs">${t('consent')}</p></div></section>`;
 }
 
@@ -327,6 +355,21 @@ function viewDnc(ctx) {
   m.el.querySelector('[data-v="q"]').addEventListener('input', (ev) => { q = ev.target.value.trim(); m.el.querySelector('[data-v="table"]').innerHTML = String(table()); });
 }
 
+/** The shared demo list of Thai public holidays, from today on. */
+function holidayList(ctx) {
+  const { t, fmt } = ctx;
+  const c = cur(ctx).compliance;
+  const rows = holidaysFrom(ymdOf(nowMs()));
+  const at = (ymd) => `${ymd}T12:00:00+07:00`;
+  ctx.ui.modal({
+    title: t('hol.title'), size: 'md',
+    body: h`<div class="stack-3"><div class="tbl-wrap st-hol"><table class="tbl"><thead><tr><th>${t('hol.date')}</th><th>${t('hol.name')}</th><th>${t('hol.hours')}</th></tr></thead>
+      <tbody>${rows.map((r) => { const wd = new Date(Date.parse(at(r.date)) + 7 * 3600000).getUTCDay(); const weekday = wd !== 0 && wd !== 6; return h`<tr class="${weekday ? 'is-weekday' : ''}"><td class="nowrap">${fmt.dateProse(at(r.date), true)}</td><td>${ctx.loc(r.name)}</td><td class="nowrap mono">${c.weFrom}–${c.weTo}${weekday ? h` <span class="hint-xs">${t('hol.weekdayNote')}</span>` : ''}</td></tr>`; })}</tbody></table></div>
+      <p class="hint-xs">${t('hol.foot')}</p></div>`,
+    buttons: [{ label: t('common.close'), kind: 'navy' }],
+  });
+}
+
 function connectLine(ctx) {
   const { t } = ctx;
   // Sample QR-like pattern (not a real code): a deterministic 21×21 grid with the three finder squares.
@@ -389,7 +432,23 @@ export function mount(root, ctx) {
     'st.dirty.discard': () => { ctx.state.draft = null; ctx.rerender(); ctx.ui.toast(t('dirty.discarded'), { kind: 'info' }); },
     'st.dirty.save': (el) => save(ctx, el),
     'st.hours.holidays': () => setVal(ctx, 'compliance.holidays', !cur(ctx).compliance.holidays, true),
+    'st.hours.list': () => holidayList(ctx),
+    'st.preset': (el) => {
+      const v = el.dataset.value;
+      if (!PRESETS.includes(v)) return;
+      const c0 = cur(ctx).compliance;
+      const purpose = c0.purpose;
+      const wasOff = !c0.recOn;
+      setVal(ctx, 'compliance.preset', v);
+      // A preset sets the purpose it needs; Healthcare switches the recording notice back on.
+      if (v === 'payment') setVal(ctx, 'compliance.purpose', 'payment');
+      else if (v === 'insurance') setVal(ctx, 'compliance.purpose', 'marketing');
+      else if (purpose === 'payment' || (v === 'healthcare' && purpose === 'marketing')) setVal(ctx, 'compliance.purpose', 'reminder');
+      if (v === 'healthcare' && wasOff) { setVal(ctx, 'compliance.recOn', true); ctx.ui.toast(t('rec.turnedOn'), { kind: 'info' }); }
+      ctx.rerender();
+    },
     'st.rec.toggle': async () => {
+      if (cur(ctx).compliance.preset === 'healthcare') { ctx.ui.toast(t('rec.lockedHealth'), { kind: 'info' }); return; }
       const on = cur(ctx).compliance.recOn;
       if (on) {
         const ok = await ctx.ui.confirm({ title: t('rec.offTitle'), body: t('rec.offBody'), confirmLabel: t('rec.offYes'), cancelLabel: t('rec.offKeep'), danger: true });
@@ -457,7 +516,14 @@ export function mount(root, ctx) {
     'st.hours.weFrom': (v) => setVal(ctx, 'compliance.weFrom', v, true),
     'st.hours.weTo': (v) => setVal(ctx, 'compliance.weTo', v, true),
     'st.rec.retention': (v) => setVal(ctx, 'compliance.retention', Number(v)),
-    'st.purpose': (v) => setVal(ctx, 'compliance.purpose', v, true),
+    'st.purpose': (v) => {
+      const pre = cur(ctx).compliance.preset;
+      setVal(ctx, 'compliance.purpose', v);
+      // The preset follows the purpose where it no longer fits (as in campaign step 1).
+      const next = v === 'payment' ? 'payment' : pre === 'payment' || (pre === 'insurance' && v !== 'marketing') || (pre === 'healthcare' && v === 'marketing') ? 'general' : pre;
+      if (next !== pre) setVal(ctx, 'compliance.preset', next);
+      ctx.rerender();
+    },
     'st.cap': (v) => setVal(ctx, 'compliance.cap', Number(v)),
     'st.ntf.webhook': (v) => { ctx.state.whResult = null; setVal(ctx, 'notifications.webhook', v); },
     'st.sec.ip': (v, el) => {

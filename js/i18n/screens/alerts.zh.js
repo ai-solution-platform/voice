@@ -30,7 +30,7 @@ export default {
   'story.start.t': '呼叫泰国某移动网络开始失败',
   'story.start.d': '送货外呼活动的部分呼叫在主线路上以 SIP 503 失败。失败的呼叫不收费。',
   'story.fired.t': '已通过邮件和 LINE 发送"失败率过高"告警',
-  'story.fired.d': '15 分钟内失败 {pct}%（{of} 通中 {failed} 通，14:08–14:23）——该规则在超过 10% 且至少 50 通时触发。',
+  'story.fired.d': '失败 {pct}%（截至 14:23 的 15 分钟内 {of} 通中 {failed} 通）——该规则在超过 10% 且至少 50 通时触发。',
   'story.backup.t': 'ANTS 已将流量切换到泰国备用线路（计划中）',
   'story.backup.d': '失败的呼叫会自动重拨，必要时走泰国备用线路。',
   'story.resolved.t': '状态页显示故障已解决',

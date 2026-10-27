@@ -119,8 +119,7 @@ function membersPanel(ctx) {
     ${list.length <= 1 ? h`<div class="empty us-alone"><span class="art">${icon('users')}</span><strong>${t('m.aloneTitle')}</strong><span class="hint">${t('m.aloneHint')}</span>
       <button type="button" class="btn btn-sm btn-navy" data-action="us.invite">${icon('plus')}${t('invite')}</button></div>` : ''}
     <div class="card-foot"><div class="row us-roles"><span class="hint-xs">${t('m.rolesLead')}</span>${ROLES.map((r) => h`<button type="button" class="chip us-rolechip" data-action="us.roles.compare" data-value="${r}">${t(`role.${r}`)} · ${t(`roleShort.${r}`)}</button>`)}
-      <button type="button" class="linkbtn" data-action="us.roles.compare" data-value="all">${t('m.compare')}</button></div></div></section>
-    <div class="note us-partner">${icon('building')}<span class="grow">${t('partner')}</span><a class="btn btn-sm" href="#/help/contact?topic=sales" data-action="us.partner">${t('partnerBtn')}</a></div>`;
+      <button type="button" class="linkbtn" data-action="us.roles.compare" data-value="all">${t('m.compare')}</button></div></div></section>`;
 }
 
 function subsPanel(ctx) {
@@ -141,6 +140,7 @@ function subsPanel(ctx) {
       <div class="us-kv"><span>${t('sub.limit')}</span><strong class="tnum">${s.dailyLimit ? fmt.int(s.dailyLimit) : t('sub.accountLimit')}</strong></div>
       <div class="us-kv"><span>${t('sub.numbersKeys')}</span><strong class="tnum">${nums} · ${keys}</strong></div>
       <div class="us-kv"><span>${t('sub.owner')}</span><strong>${s.owner || '—'}</strong></div>
+      <div class="us-kv us-docs"><span>${t('sub.docs')}</span><strong>${docsStatus(ctx, s)}</strong></div>
       <div class="row us-sub-actions">
         ${own || s.main ? h`<button type="button" class="btn btn-sm" data-action="us.sub.move" data-value="${s.id}" ${raw(suspended ? 'aria-disabled="true"' : '')}>${icon('coin')}${t('sub.move')}</button>` : ''}
         ${!s.main ? h`<button type="button" class="btn btn-sm" data-action="us.sub.mode" data-value="${s.id}">${own ? t('sub.useMain') : t('sub.giveOwn')}</button>` : ''}
@@ -153,7 +153,18 @@ function subsPanel(ctx) {
   return h`<div class="note note-info us-subline">${icon('info')}<span class="grow">${t('sub.line', lineVars)}</span><span class="chip chip-info" tabindex="0" data-tip-key="term.subaccount">${t('preview')}</span></div>
     <div class="us-subgrid">${list.map(card)}
       <button type="button" class="card us-sub us-sub-new" data-action="us.sub.new">${icon('plus', 'ico-lg')}<strong>${t('sub.new')}</strong><span class="hint-xs">${t('sub.newHint')}</span></button></div>
-    <div class="note us-partner">${icon('building')}<span class="grow">${t('partner')}</span><a class="btn btn-sm" href="#/help/contact?topic=sales" data-action="us.partner">${t('partnerBtn')}</a></div>`;
+    <div class="note us-subdocs">${icon('file-text')}<span class="grow">${t('subDocs.note')}</span><a class="btn btn-sm" href="#/help/article/thai-number-kyc" data-action="us.sub.docshelp">${icon('book')}${t('subDocs.help')}</a></div>`;
+}
+
+/**
+ * Business documents of a sub-account (T2 audit #7). Today every sub-account belongs to the company and uses the
+ * company's checked documents; a sub-account used by another business would need its own (planned, not built).
+ */
+function docsStatus(ctx, s) {
+  const { t, fmt } = ctx;
+  const kyc = ctx.store.get('org.kycApproved');
+  if (kyc) return h`<span class="chip chip-ok us-docs-chip is-company" tabindex="0" data-tip-key="users.sub.docsCompanyTip">${t('sub.docsCompany', { date: fmt.dayMonth(kyc) })}</span>`;
+  return h`<span class="chip chip-warn us-docs-chip is-none" tabindex="0" data-tip-key="users.sub.docsNoneTip">${t('sub.docsNone')}</span>`;
 }
 
 function auditRows(ctx) {
@@ -413,7 +424,8 @@ function newSub(ctx) {
     <div class="grid g-2"><label class="field"><span class="label">${t('ns.allocation')}</span><input class="input tnum" data-n="alloc" inputmode="numeric" value="${fmt.int(1000)}"><span class="hint-xs">${t('ns.allocHint', { n: fmt.credits2(freeMain(ctx)) })}</span></label>
       <label class="field"><span class="label">${t('lim.daily')}</span><input class="input tnum" data-n="limit" inputmode="numeric" value="${fmt.int(1000)}"></label></div>
     <span class="field-err" data-n="err" hidden></span>
-    <p class="hint-xs">${t('ns.note')}</p></div>`;
+    <p class="hint-xs">${t('ns.note')}</p>
+    <p class="hint-xs">${t('ns.docsNote')}</p></div>`;
   ctx.ui.modal({
     title: t('sub.new'), body,
     buttons: [{ label: t('common.cancel') }, { label: t('ns.create'), kind: 'primary', onClick: (hh, btn) => {
@@ -500,6 +512,7 @@ export function mount(root, ctx) {
     'us.edit': (el) => editDrawer(ctx, el.dataset.value),
     'us.roles.compare': (el) => matrixModal(ctx, el.dataset.value),
     'us.sub.new': () => newSub(ctx),
+    'us.sub.docshelp': () => {}, // link to Help › Documents for Thai numbers
     'us.sub.move': (el) => moveCredits(ctx, el.dataset.value),
     'us.sub.mode': (el) => giveOwn(ctx, sub(el)),
     'us.sub.limit': (el) => setLimit(ctx, sub(el)),

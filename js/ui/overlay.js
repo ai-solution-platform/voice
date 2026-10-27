@@ -11,8 +11,19 @@ export const hasModalLayer = () => stack.some((l) => l.modal);
 
 function syncScrollLock() {
   const m = hasModalLayer();
-  document.documentElement.style.overflow = m ? 'hidden' : '';
-  document.documentElement.classList.toggle('has-modal', m); // toasts move off the dialog's footer (app.css)
+  const root = document.documentElement;
+  root.style.overflow = m ? 'hidden' : '';
+  root.classList.toggle('has-modal', m); // toasts move off the dialog's footer (app.css)
+  // A drawer: toasts sit beside it, or below its header when there is no room (app.css), never on the header.
+  const top = [...stack].reverse().find((l) => l.modal);
+  const drawer = top && top.el && top.el.classList && top.el.classList.contains('drawer') ? top.el : null;
+  root.classList.toggle('has-drawer', !!drawer);
+  root.classList.toggle('has-drawer-wide', !!drawer && drawer.classList.contains('drawer-wide'));
+  if (drawer) {
+    const head = drawer.querySelector('.modal-head');
+    root.style.setProperty('--drawer-head', `${Math.round(head ? head.getBoundingClientRect().height : 72)}px`);
+  }
+  window.dispatchEvent(new CustomEvent('demo:layers')); // tooltip.js hides its tooltip
 }
 
 /**
