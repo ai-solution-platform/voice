@@ -14,7 +14,7 @@ export default {
   'a.ctaKey': '您的 API 密钥',
   'b.title': 'SIP 中继',
   'b.sub': '适用于您自己的 PBX（FreePBX、3CX、Asterisk、Yeastar）。防火墙就绪时约 10 分钟。',
-  'b.price': '中继每月 {trunk} 点数 · 含 {included} 路并发 · 每增加 1 路 +{extra} · 无开通费',
+  'b.price': '中继每月 {trunk} 点数 · 含 {included} 路并发 · 每增加 1 路并发每月 {extra} · 无开通费',
   'b.create': '创建中继',
   'b.guides': 'PBX 设置指南',
 
@@ -81,7 +81,7 @@ export default {
   'api.evSig': '如何校验签名',
   'api.evCopy': '复制数据',
   'prices.title': '价格',
-  'prices.line': '呼出每分钟 {out} · 呼入每分钟 {inb} · OTP 每通接听 {otp} · 号码每月 {number} · SIP 与 API 同一价格。通话自接听起按开始的每分钟计费。1 分钟以内的 OTP 和通知电话按每通接听电话一个价格。未接听的电话免费。',
+  'prices.line': '呼出每分钟 {out} · 呼入每分钟 {inb} · OTP 每通接听 {otp} · 号码每月 {number}。SIP 与 API 同价。按开始的每分钟计费，未接听免费。',
   'prices.plans': '用量套餐每月 {min} 分钟起（12 个月）· 合作伙伴与批发：请联系销售',
   'prices.all': '查看全部价格',
 
@@ -254,4 +254,8 @@ export default {
   'wz.5.ready': '所有检测已通过，可以激活中继。',
   'wz.5.allPassed': '所有检测已通过，可以激活中继。',
   'wz.5.optionsPassed': 'OPTIONS 已通过。再完成一通测试通话即可。',
+  'wz.5.readyInFail': '呼入测试失败：无音频。请修复防火墙后重试。您仍可为呼出电话启用中继。',
+  'wz.5.inFail': '呼入测试失败：无音频。请修复防火墙后重试，或运行呼出测试。',
+  'wz.5.readyNoIn': 'OPTIONS 和呼出测试已通过。现在即可启用；呼入测试尚未运行。',
+  'wz.5.readyNoOut': 'OPTIONS 和呼入测试已通过。现在即可启用；呼出测试尚未运行。',
 };

@@ -310,4 +310,9 @@ export default {
   'reason.staffTransfer': '已接听 · 按 {key} → 与您的员工通话',
   'reason.repeatPressed': '已接听 · 按 {key} 重听消息',
   'dt': '{date} {time}',
+  'cost.planMin': { other: '从套餐分钟扣除 {n} 分钟 · 0 点数' },
+  'cost.planOver': '+ 超出套餐分钟 {n} 分钟 × {rate} = {total} 点数',
+  'cost.wizardTest': 'SIP 设置向导的测试呼叫 · 不计费 · 0 点数',
+  'reason.identityConfirmed': '已接听 · 按了 1（确认是本人 · 已播放提醒）',
+  'reason.quoteSent': '已接听 · 按了 1（已通过短信发送续保报价）',
 };

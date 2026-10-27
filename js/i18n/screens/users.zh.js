@@ -105,7 +105,7 @@ export default {
   'sub.balance': '余额',
   'sub.free': '未分配',
   'sub.ofMoved': '已转入 {moved}，剩余',
-  'sub.sharedHint': '（共用）',
+  'sub.sharedHint': '（主余额中未分配的部分，共用）',
   'sub.used7': '近 7 天通话点数',
   'sub.limit': '每日消费上限',
   'sub.accountLimit': '按账户上限',

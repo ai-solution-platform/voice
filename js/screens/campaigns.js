@@ -65,6 +65,16 @@ const PURPOSES = ['reminder', 'service', 'payment', 'marketing'];
 /** Industry presets (planned): each sets hours, retries and recording rules together. Rules shown per preset. */
 const PRESETS = ['general', 'payment', 'healthcare', 'insurance'];
 const PRESET_RULES = { general: 2, payment: 4, healthcare: 3, insurance: 4 };
+// What a preset fills in: a fitting sample script (campaigns.script.<kind>), the keys that script offers, and the
+// default name (campaigns.defaultName[.<preset>]). Payment reminder confirms the person before any detail.
+const PRESET_SCRIPT = { general: 'reminder', payment: 'payment', healthcare: 'reminder', insurance: 'insurance' };
+const PRESET_KEYS = {
+  general: [['1', 'confirm'], ['2', 'sms-link'], ['9', 'opt-out']],
+  healthcare: [['1', 'confirm'], ['2', 'sms-link'], ['9', 'opt-out']],
+  payment: [['1', 'confirm'], ['9', 'opt-out']],
+  insurance: [['1', 'sms-link'], ['2', 'transfer'], ['9', 'opt-out']],
+};
+const SCRIPT_SEC = { pickup: 15, delivery: 22, payment: 20, insurance: 18 };
 const KEY_ACTIONS = ['confirm', 'sms-link', 'transfer', 'repeat', 'opt-out'];
 const STEPS = 4;
 const COLUMNS = ['phone', 'name', 'date', 'time', 'clinic', 'slot', 'person_id'];
@@ -181,7 +191,7 @@ function buildC1(c) {
   for (const x of calls) {
     used.add(x.to);
     const gi = givenIdx(x.to);
-    const rec = { phone: x.to, n: gi >= 0 ? gi : 8 + (hash(x.to) % 16), status: x.status, sip: x.sip, q850: x.q850, attempt: 1, at: Date.parse(x.ts), key: x.keys || null, sec: x.sec || 0, credits: x.credits || 0, callId: x.id };
+    const rec = { phone: x.to, n: gi >= 0 ? gi : 8 + (hash(x.to) % 16), status: x.status, sip: x.sip, q850: x.q850, attempt: 1, at: Date.parse(x.ts), key: x.keys || null, sec: x.sec || 0, credits: (x._pre ? x._pre.credits : x.credits) || 0, callId: x.id }; // at the listed price; planTerms() converts
     if (x.status === 'completed') { tally.completed++; tally.keys[x.keys || 'none']++; tally.billed += x.billedMin || 1; rec.billed = x.billedMin || 1; if (x.keys === '2') rec.transferred = true; if (x.keys === '9') rec.optedOut = true; }
     else if (x.status === 'no-answer') { if (x.q850 === 20) tally.phoneOff++; else tally.noAnswer++; rec.retryAt = Date.parse(x.ts) + 30 * 60000; }
     else if (x.status === 'busy') { if (x.sip === 603) tally.declined++; else tally.busy++; rec.retryAt = Date.parse(x.ts) + 30 * 60000; }
@@ -223,7 +233,7 @@ function recipientsOf(c) {
   }
   if (c.list) return c.list.map((x) => ({ phone: x.phone, n: x.n, status: c.status === 'canceled' ? 'canceled' : 'queued', attempt: 0, at: null, sec: 0, credits: 0 }));
   const sig = `${c.id}:${c.status}:${(store.get('calls') || []).length > 0}`;
-  if (recipientCache.has(sig)) return applyStop(c, recipientCache.get(sig));
+  if (recipientCache.has(sig)) return planTerms(c, applyStop(c, recipientCache.get(sig)));
   let list;
   if (c.id === 'bc_01JBK7C1Q2') list = buildC1(c);
   // Completed samples answer at ≈ 55 %; transferred calls carry the extra billed minutes, so credits stay as billed.
@@ -236,10 +246,12 @@ function recipientsOf(c) {
     list = Array.from({ length: c.toCall || 0 }, () => ({ phone: phoneGen(r, used), n: Math.floor(r() * NAMES.length), status: 'queued', attempt: 0, at: null, sec: 0, credits: 0 }));
   }
   recipientCache.set(sig, list);
-  return applyStop(c, list);
+  return planTerms(c, applyStop(c, list));
 }
 /** A stopped campaign: recipients that were still waiting are not called. */
 const applyStop = (c, list) => (c.status === 'canceled' ? list.map((x) => (x.status === 'queued' ? { ...x, status: 'canceled' } : x)) : list);
+/** A sample campaign of this plan cycle (planMin set by the plan switch): its answered calls used plan minutes, not credits. */
+const planTerms = (c, list) => (c.planMin == null ? list : list.map((x) => (x.status === 'completed' && x.billed && x.planMin == null ? { ...x, planMin: x.billed, credits: Math.max(0, round2((x.credits || 0) - x.billed * PRICES.outbound)) } : x)));
 
 // ---------- sample audience (flu_vaccine_nov.csv, generated in memory) ----------
 const SAMPLE_FILE = 'flu_vaccine_nov.csv';
@@ -322,7 +334,7 @@ const fixParticles = (gender, text) => (gender === 'female' ? String(text).repla
 /** Rough message length for the estimate: built-in scripts use the measured length, edited ones the TTS estimate. */
 function messageSeconds(w) {
   if (w.mode === 'audio') return w.audioFile && w.audioFile.sec ? Math.round(w.audioFile.sec) : 30;
-  if (w.text == null) return w.kind === 'pickup' ? 15 : w.kind === 'delivery' ? 22 : w.lang === 'zh' ? 24 : w.lang === 'en' ? 27 : 26;
+  if (w.text == null) return SCRIPT_SEC[w.kind] || (w.lang === 'zh' ? 24 : w.lang === 'en' ? 27 : 26);
   const ms = TTS ? TTS.estimateMs(fillVars(w.text, sampleVars(w.lang)), w.lang, w.rate || 1) : 26000;
   return Math.max(5, Math.round(ms / 1000));
 }
@@ -385,8 +397,8 @@ function lastSimilar(subId) {
   const pct = Math.round((answerRate(k) || 0) * 10) / 10;
   // Credits per answered call at the listed price: from its billed minutes when known (a campaign run on a plan was
   // charged at the plan rate), else from its credits (the samples were billed at the listed price).
-  const listed = same.billedMin != null ? same.billedMin * PRICES.outbound : same.credits;
-  return { pct, name: same.name, avg: k.answered && same.credits ? listed / k.answered : null, c: same, k };
+  const listed = same.billedMin != null ? same.billedMin * PRICES.outbound : same._pre ? same._pre.credits : same.credits;
+  return { pct, name: same.name, avg: k.answered && listed ? listed / k.answered : null, c: same, k };
 }
 function estimateFor(w, subId) {
   const toCall = w.audience ? w.audience.toCall : 0;
@@ -412,9 +424,9 @@ function estimateFor(w, subId) {
   // At the account's rates: unchanged without a plan; on a plan the plan rate, with the minutes from the plan minutes.
   const acc = atAccountRate({ max, expected: listExpected }, perMin, premium);
   const expected = acc.expected;
-  // "head": the usage the confirmation, the button and the daily-limit check use — the ceiling, or ≈ expected
-  // without one. "headCharge": what it takes from the balance (prepaid) or adds to the invoice (postpaid) — on a
-  // plan only the minutes beyond the plan minutes and the premium voice.
+  // "head": the ceiling, or ≈ expected without one (at the account's rates). "headCharge": the credits it charges —
+  // from the balance (prepaid) or on the invoice (postpaid); on a plan only the minutes beyond the plan minutes and
+  // the premium voice. The balance and the daily spending limit both count headCharge: plan minutes are not credits.
   const head = acc.max == null ? expected : acc.max;
   const headCharge = acc.onPlan ? (acc.cMax || acc.cExp).charge : head;
   // SMS links: one per answered call at most; expected from the last campaign's share of that key.
@@ -440,8 +452,8 @@ function estimateFor(w, subId) {
   const avgAt = (v) => (acc.onPlan ? (v / perMin) * (acc.rate + (premium ? PRICES.premiumVoice : 0)) : v); // credits per answered call at the account's rate
   return { toCall, sec, minutes, maxMinutes, paths: p, perMin, perCall, perCallMax, max: acc.max, expected, listMax: max, listExpected, maxMin: acc.maxMin, expMin: acc.expMin, onPlan: acc.onPlan, rate: acc.rate, cMax: acc.cMax, cExp: acc.cExp, premium,
     usedAvg: !!useAvg && perAnswered > perCall, avg: useAvg ? round2(avgAt(perAnswered)) : null, smsMax, smsExpected, fb, fbMax, fbExpected, preSms, people, pct: last.pct, lastName: last.name, head, headCharge, unbounded: p.unbounded,
-    balanceAfter: round2(bal - chargeExp), balanceAfterMax: chargeMax == null ? null : round2(bal - chargeMax), usedToday, daily, dailyAfter: round2(usedToday + head),
-    short: headCharge > bal ? Math.ceil((headCharge - bal) / 100) * 100 : 0, overDaily: daily && usedToday + head > daily, plan: comparePlans(toCall * minutes) };
+    balanceAfter: round2(bal - chargeExp), balanceAfterMax: chargeMax == null ? null : round2(bal - chargeMax), usedToday, daily, dailyAfter: round2(usedToday + headCharge),
+    short: headCharge > bal ? Math.ceil((headCharge - bal) / 100) * 100 : 0, overDaily: daily && usedToday + headCharge > daily, plan: comparePlans(toCall * minutes) };
 }
 
 // ---------- the run engine (module level: a campaign keeps calling while you look at other screens) ----------
@@ -488,8 +500,8 @@ function attemptCost(run, o, i) {
 function reasonOf(run, o, act) {
   if (o.cat !== 'completed') return { key: o.cat === 'noAnswer' ? 'noAnswerSim' : o.cat === 'busy' ? 'busySim' : 'net503Sim' };
   if (!o.key) return { key: 'noKey' };
-  if (act === 'confirm') return { key: run.kind === 'delivery' ? 'keyConfirm' : 'apptConfirmed' };
-  if (act === 'sms-link') return { key: 'smsLinkSent' };
+  if (act === 'confirm') return { key: run.kind === 'delivery' ? 'keyConfirm' : run.kind === 'payment' ? 'identityConfirmed' : 'apptConfirmed' };
+  if (act === 'sms-link') return { key: run.kind === 'insurance' ? 'quoteSent' : 'smsLinkSent' };
   if (act === 'opt-out') return { key: 'optOut' };
   if (isTransfer(act)) return { key: 'staffTransfer', vars: { key: o.key } };
   if (act === 'repeat') return { key: 'repeatPressed', vars: { key: o.key } };
@@ -550,7 +562,7 @@ function runRecipient(run, x, i) {
     const cost = answered ? attemptCost(run, o, i) : { sec: 0, credits: 0, act: null };
     const more = !answered && run.att[i] < triesOf(run, i) && !run.stopped;
     const last = !answered && !more;
-    return { ...base, status: oc.status, sip: oc.sip, q850: oc.q850, attempt: run.att[i], at: run.lastAt[i], key: answered ? o.key : null, sec: cost.sec, credits: answered && run.cr[i] != null ? run.cr[i] : cost.credits,
+    return { ...base, status: oc.status, sip: oc.sip, q850: oc.q850, attempt: run.att[i], at: run.lastAt[i], key: answered ? o.key : null, sec: cost.sec, credits: answered && run.cr[i] != null ? run.cr[i] : cost.credits, planMin: answered ? run.pm[i] || 0 : 0,
       transferred: isTransfer(cost.act), optedOut: cost.act === 'opt-out', callId: run.callIds[i], retryIn: more ? run.wait : null,
       fbSent: run.fallback && last && !run.stopped && cat === 'noAnswer' ? run.fallback : null };
   }
@@ -581,9 +593,9 @@ function startRun(c, { est, ui, t }) {
   const firstPassMs = c.expectedFinish && c.startedAt ? Math.max(60000, Date.parse(c.expectedFinish) - Date.parse(c.startedAt)) : 60000;
   const run = {
     id: c.id, total, order, ans: plan.ans, interim: plan.interim, maxAtt: 1 + retries, wait: Number(c.retryAfterMin) || 30, firstPassMs,
-    att: new Array(total).fill(0), cat: new Array(total).fill(null), lastAt: [], dialAt: [], fly: new Uint8Array(total), callIds: [], cr: [],
+    att: new Array(total).fill(0), cat: new Array(total).fill(null), lastAt: [], dialAt: [], fly: new Uint8Array(total), callIds: [], cr: [], pm: [],
     wave: 1, queue: null, nextQueue: null, qd: 0, qf: 0, phase: 'dial', waitUntil: 0, dialledTries: 0, plannedTries: 0,
-    // spent / due: usage credits at the account's rates · charged: credits charged now · planMin: minutes from the plan minutes
+    // spent / due / charged: credits charged (on a plan only minutes beyond the plan minutes and extras) · planMin: minutes from the plan minutes
     dialled: 0, paused: false, stopped: false, spent: 0, due: 0, billed: 0, charged: 0, planMin: 0,
     timer: null, step: Math.max(1, Math.ceil(total / RUN_TICKS)), conc: Math.min(c.concurrent || 20, 20), sub: c.sub, callerId: c.callerId,
     minutes: est.minutes, perMin: est.perMin, msgSec: est.sec, baseSec: est.sec + 2, transferMin: Number(c.transferMin) || 0, actions: c.keys || {}, kind: (c.script && c.script.kind) || 'reminder',
@@ -686,7 +698,7 @@ function settle(run, c, target) {
     const bill = chargeCalls(recs.slice().reverse());
     run.charged = round2(run.charged + bill.charge);
     run.planMin += bill.planMinutes;
-    recs.forEach((rec, j) => { run.cr[who[j]] = rec.credits; run.due = round2(run.due + (rec.credits || 0)); });
+    recs.forEach((rec, j) => { run.cr[who[j]] = rec.credits; run.pm[who[j]] = rec.planMin || 0; run.due = round2(run.due + (rec.credits || 0)); });
     store.set('calls', [...recs, ...(store.get('calls') || [])]);
   }
   if (store.get('env') === 'live') run.spent = run.due;
@@ -748,6 +760,7 @@ function exportRecipients(c, { t, ui }, rowsIn) {
     { key: 'keys', label: 'keys', value: (r) => r.key || '' },
     { key: 'talk_seconds', label: 'talk_seconds', value: (r) => r.sec || 0 },
     { key: 'credits', label: 'credits', value: (r) => (r.credits || 0).toFixed(2) },
+    ...(c.planMin != null ? [{ key: 'plan_minutes', label: 'plan_minutes', value: (r) => r.planMin || 0 }] : []),
     { key: 'reason_text', label: 'reason_text', value: (r) => REASON_OF(r, t) },
     ...(c.fallback ? [{ key: 'fallback_sent', label: 'fallback_sent', value: (r) => (r.fbSent || (r.status === 'no-answer' && c.status === 'completed' ? c.fallback.channel || 'sms' : '')) }] : []),
     ...(c.preSms ? [{ key: 'sms_before_call', label: 'sms_before_call', value: (r) => (r.attempt || r.status === 'ringing' || r.status === 'in-progress' ? 'sms' : '') }] : []),
@@ -894,7 +907,7 @@ function listRow(ctx, c) {
   else when = dtShort(ctx, c.finishedAt || c.canceledAt || c.startedAt || nowMs());
   // Not started yet: the estimate — on a plan in plan minutes (+ the credits beyond them, if any).
   const planned = ['draft', 'scheduled'].includes(c.status);
-  const credits = !planned ? fmt.credits2(k.credits || c.credits || 0)
+  const credits = !planned ? (c.planMin ? h`${fmt.credits2(k.credits || c.credits || 0)}<span class="hint-xs cp-block">${ctx.ui.describe.plusPlanMin(c.planMin)}</span>` : fmt.credits2(k.credits || c.credits || 0))
     : est.onPlan ? h`${est.max == null ? t('credits.planAbout', { n: fmt.int(est.expMin) }) : t('credits.planUpTo', { n: fmt.int(est.maxMin) })}${(est.cMax || est.cExp).charge ? h`<span class="hint-xs cp-block">${t('credits.plus', { n: fmt.credits2((est.cMax || est.cExp).charge) })}</span>` : ''}`
     : est.max == null ? t('credits.about', { n: fmt.credits2(est.expected) }) : t('credits.upTo', { n: fmt.credits2(est.max) });
   return h`<tr class="${c.fresh ? 'new-row' : ''}">
@@ -1032,21 +1045,41 @@ function marketingKeys(w) {
   if (!w.keys.some((k) => k.key === '9')) w.keys = [...w.keys, { key: '9', action: 'opt-out' }];
   w.keys = w.keys.map((k) => (k.key === '9' ? { ...k, action: 'opt-out' } : k));
 }
-/** Choosing a preset sets the purpose it needs (and keeps the purpose otherwise). */
+/** Choosing a preset sets the purpose it needs (and keeps the purpose otherwise), then fills in its sample campaign. */
 function applyPreset(w, p) {
   w.preset = p;
   if (p === 'payment') w.purpose = 'payment';
   else if (p === 'insurance') { w.purpose = 'marketing'; marketingKeys(w); }
   else if (w.purpose === 'payment' || (p === 'healthcare' && w.purpose === 'marketing')) w.purpose = 'reminder';
+  fillForPreset(w);
 }
 /** Changing the purpose keeps the preset only where it still fits. */
 function purposeChanged(w, v) {
+  const before = presetOf(w);
   w.purpose = v;
   if (v === 'marketing') marketingKeys(w);
   if (v === 'payment') w.preset = 'payment';
   else if (w.preset === 'payment') w.preset = 'general';
   w.preset = presetOf(w);
+  if (presetOf(w) !== before) fillForPreset(w);
 }
+const keysAre = (w, list) => w.keys.length === list.length && list.every(([k, a]) => w.keys.some((x) => x.key === k && x.action === a));
+/**
+ * The preset's sample: its script (only while the script is still a built-in one, never over your own text), the
+ * keys that script offers (only while the keys are still a preset's defaults) and the default name (only while you
+ * have not named the campaign). A preset therefore never overwrites what you wrote.
+ */
+function fillForPreset(w) {
+  const p = presetOf(w);
+  const kind = PRESET_SCRIPT[p] || 'reminder';
+  const builtIn = w.text == null || Object.values(PRESET_SCRIPT).some((k) => w.text === builtinText(w.lang, k)) || w.text === builtinText(w.lang, w.kind);
+  if (builtIn) { w.kind = kind; w.text = null; }
+  if (Object.values(PRESET_KEYS).some((list) => keysAre(w, list)) || !w.keys.length) w.keys = PRESET_KEYS[p].map(([key, action]) => ({ key, action }));
+  if (w.purpose === 'marketing') marketingKeys(w);
+  w.filled = p;
+}
+/** The default campaign name of the preset in use (Payment reminder · November, …). */
+const defaultNameKey = (w) => (['payment', 'insurance'].includes(presetOf(w)) ? `defaultName.${presetOf(w)}` : 'defaultName');
 const hhmm = (min) => `${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`;
 /**
  * Calling window on the Bangkok day of `ms`: { ok, from, to, usual, hol } in minutes. A Thai public holiday
@@ -1107,7 +1140,7 @@ function sampleLike(c) {
   const rows = Array.from({ length: c.toCall }, (_, i) => ({ row: i + 1, phone: phoneGen(r, used), n: Math.floor(r() * NAMES.length), problem: null }));
   return { file: c.file || `${c.id}.csv`, rows, total: c.rows || c.toCall, duplicates: c.duplicates || 0, dnc: c.dnc || 0, invalid: 0, toCall: c.toCall, columns: COLUMNS };
 }
-const wzName = (ctx, w) => (w.name == null ? ctx.t('defaultName') : typeof w.name === 'object' ? loc(w.name) : w.name);
+const wzName = (ctx, w) => (w.name == null ? ctx.t(defaultNameKey(w)) : typeof w.name === 'object' ? loc(w.name) : w.name);
 const subOfCid = (cid) => { const n = ownedCallerIds().find((x) => x.number === cid); return n ? n.sub : null; };
 const scriptText = (w) => (w.text != null ? w.text : builtinText(w.lang, w.kind));
 const speakKey = (kind) => (kind === 'reminder' ? 'dialer.tpl.reminder.speak' : `campaigns.script.${kind}.speak`);
@@ -1141,7 +1174,9 @@ function wizardView(ctx) {
         ${w.step > 1 ? h`<button type="button" class="btn" data-action="wc.back">${icon('arrow-left', 'ico-sm')}${t('common.back')}</button>` : ''}
         <span class="grow"></span>
         <button type="button" class="btn btn-ghost" data-action="wc.save">${t('wz.saveDraft')}</button>
-        ${w.step < STEPS ? h`<button type="button" class="btn btn-navy" data-action="wc.next">${t('wz.next', { step: labels[w.step] })}${icon('arrow-right', 'ico-sm')}</button>` : launchButton(ctx, w)}
+        ${w.step < STEPS ? (w.loading && w.step === 1
+          ? h`<button type="button" class="btn btn-navy is-waiting" data-action="wc.next" data-next-wait="${w.nextAfterLoad ? 'queued' : 'reading'}"><span class="spin" aria-hidden="true"></span><span aria-live="polite">${t(w.nextAfterLoad ? 'wz.nextQueued' : 'wz.nextReading')}</span></button>`
+          : h`<button type="button" class="btn btn-navy" data-action="wc.next">${t('wz.next', { step: labels[w.step] })}${icon('arrow-right', 'ico-sm')}</button>`) : launchButton(ctx, w)}
       </div>
     </section></div>`;
 }
@@ -1155,6 +1190,7 @@ function presetBlock(ctx, w) {
     <div class="stack" style="gap:2px"><span class="label" id="cp-preset-l">${t('pre.title')}</span><span class="hint-xs">${t('pre.intro')}</span></div>
     <div class="cp-presets" role="group" aria-labelledby="cp-preset-l">${PRESETS.map((x) => h`<button type="button" class="optcard" data-action="wc.1.preset" data-value="${x}" aria-pressed="${p === x}"><span class="t">${t(`pre.${x}.t`)}</span><span class="h">${t(`pre.${x}.h`)}</span></button>`)}</div>
     <div class="cp-preset-rules" aria-live="polite"><ul>${rules.map((r) => h`<li>${r}</li>`)}</ul>
+      ${w.filled ? h`<p class="hint-xs cp-preset-filled" data-preset-filled>${icon('check', 'ico-xs')} ${t('pre.filled')}</p>` : ''}
       <p class="hint-xs cp-preset-check">${icon('alert', 'ico-xs')} ${t('pre.check')}</p></div>
   </section>`;
 }
@@ -1411,7 +1447,7 @@ function costCard(ctx, w, e) {
       <div class="kv"><span class="k">${t('cost.balanceAfter')}</span><span class="v">≈ ${fmt.credits2(e.balanceAfter)}</span></div>
       ${e.balanceAfterMax != null ? h`<p class="hint-xs cp-cost-sub">${t('cost.balanceAfterMax', { n: fmt.credits2(e.balanceAfterMax) })}</p>` : ''}
       ${e.daily ? h`<div class="kv"><span class="k">${t('cost.daily', { limit: fmt.int(e.daily) })}</span><span class="v ${e.overDaily ? 'err-text' : 'ok-text'}">${e.overDaily ? t('cost.dailyOver') : t('cost.dailyOk')}</span></div>
-        <p class="hint-xs cp-cost-sub">${t(e.max == null ? 'cost.dailyLineAbout' : 'cost.dailyLine', { today: fmt.credits2(e.usedToday), max: fmt.credits2(e.head), after: fmt.credits2(e.dailyAfter), limit: fmt.int(e.daily) })}</p>` : ''}
+        <p class="hint-xs cp-cost-sub">${t(e.max == null ? 'cost.dailyLineAbout' : 'cost.dailyLine', { today: fmt.credits2(e.usedToday), max: fmt.credits2(e.headCharge), after: fmt.credits2(e.dailyAfter), limit: fmt.int(e.daily) })}</p>` : ''}
       ${e.short ? h`<div class="note note-err" role="alert">${icon('alert-circle')}<div class="grow">${t('cost.short', { n: fmt.int(e.short) })} <button type="button" class="linkbtn" data-action="wc.4.topup">${t('top.topup')}</button></div></div>` : ''}
       ${e.overDaily ? h`<div class="note note-warn">${icon('alert')}<div class="grow">${t('cost.overDaily', { limit: fmt.int(e.daily) })} <button type="button" class="linkbtn" data-action="wc.4.limits">${t('cost.raise')}</button></div></div>` : ''}
       ${e.plan.suggestPlan && env() === 'live' && !e.onPlan ? h`<p class="hint-xs">${t('cost.planLine', { min: fmt.int(e.plan.suggestPlan.plan.minMinutes), cost: fmt.int(e.plan.suggestPlan.cost) })}</p>` : ''}
@@ -1424,7 +1460,7 @@ function costCard(ctx, w, e) {
  */
 function planCostRows(ctx, e) {
   const { t, html: h, icon, fmt } = ctx;
-  const sub = (c, about) => h`<p class="hint-xs cp-cost-sub">${t('cost.planSub', { credits: `${about ? '≈ ' : ''}${fmt.credits2(c.credits)}`, part: `${about ? '≈ ' : ''}${planCreditsText(ctx, c)}` })}</p>`;
+  const sub = (c, about) => h`<p class="hint-xs cp-cost-sub">${t('cost.planSub', { part: `${about ? '≈ ' : ''}${planCreditsText(ctx, c)}` })}</p>`;
   const exp = h`<div class="kv ${e.max == null ? 'kv-total' : ''}"><span class="k">${t('cost.expected', { pct: fmt.pct(e.pct) })}</span><span class="v" ${raw(e.max == null ? 'data-cost-max' : '')}>≈ ${planMinText(ctx, e.expMin)}</span></div>${sub(e.cExp, true)}`;
   if (e.max == null) return h`${exp}<p class="note note-warn cp-noceil" role="note">${icon('alert')}<span>${t('cost.noCeiling')}</span></p>`;
   return h`<div class="kv kv-total"><span class="k">${e.maxMinutes > e.minutes ? t('cost.maxLong') : t('cost.max')}</span><span class="v" data-cost-max>${planMinText(ctx, e.maxMin)}</span></div>${sub(e.cMax, false)}${exp}`;
@@ -1460,7 +1496,7 @@ function recordFromWizard(ctx, w, status) {
   const sub = subOfCid(w.cid);
   const e = estimateFor(w, sub);
   const existing = w.id ? findCamp(w.id) : null;
-  const name = w.name == null ? Object.fromEntries(LANG_ORDER.map((l) => [l, tIn(l, 'campaigns.defaultName')])) : w.name;
+  const name = w.name == null ? Object.fromEntries(LANG_ORDER.map((l) => [l, tIn(l, `campaigns.${defaultNameKey(w)}`)])) : w.name;
   const list = w.audience ? w.audience.rows.filter((r) => !r.problem).map((r) => ({ phone: r.phone, n: r.n == null ? (hash(r.phone) % NAMES.length) : r.n, ...(r.pid ? { pid: r.pid } : {}) })) : null;
   const preset = presetOf(w);
   const rec = {
@@ -1620,8 +1656,8 @@ function detailView(ctx, c) {
   const fbSent = fallbackSent(c, k);
   const tries = (c.triesRun || 1) - 1;
   const finLine = c.demoRunSec
-    ? t('d.finishedDemo', { time: fmt.timeShort(c.realFinish || c.finishedAt), sec: fmt.int(c.demoRunSec), tries: tries ? t('d.triesMany', { count: tries }) : t('d.triesOne'), rate: fmt.pct(c.result ? c.result.answeredPct : 0), credits: fmt.credits2(c.credits || k.credits) })
-    : t('d.finished', { time: dtProse(ctx, c.finishedAt || nowMs()), rate: fmt.pct(c.result ? c.result.answeredPct : 0), credits: fmt.credits2(c.credits || k.credits) });
+    ? t('d.finishedDemo', { time: fmt.timeShort(c.realFinish || c.finishedAt), sec: fmt.int(c.demoRunSec), tries: tries ? t('d.triesMany', { count: tries }) : t('d.triesOne'), rate: fmt.pct(c.result ? c.result.answeredPct : 0), used: ctx.ui.describe.used(c.credits || k.credits, c.planMin) })
+    : t('d.finished', { time: dtProse(ctx, c.finishedAt || nowMs()), rate: fmt.pct(c.result ? c.result.answeredPct : 0), used: ctx.ui.describe.used(c.credits || k.credits, c.planMin) });
   const preSent = preSmsSent(c, k);
   const finished = done && c.result ? h`<div class="note note-ok cp-finished" role="status">${icon('check-circle')}<div class="grow">${finLine}${preSent != null ? h` · <strong data-pre-line>${t('d.preSentLine', { n: fmt.int(preSent) })}</strong>` : ''}${fbSent != null ? h` · <strong data-fb-line>${t('d.fbSentLine', { channel: chName(ctx, c.fallback.channel), n: fmt.int(fbSent) })}</strong>` : ''}</div></div>` : '';
   const stopped = c.status === 'canceled' ? h`<div class="note note-warn" role="status">${icon('x-circle')}<span>${c.stopped ? t('d.stoppedLine', { time: dtProse(ctx, c.canceledAt), n: fmt.int(c.notCalled || 0) }) : t('d.canceledLine', { time: fmt.dateTime(c.canceledAt) })}</span></div>` : '';
@@ -1705,25 +1741,45 @@ function paceOf(c, k) {
 }
 /** What the whole list should cost: the ceiling, or (no ceiling) the current pace, else the launch estimate. */
 const wholeOf = (est, pace) => (est.max != null ? est.max : pace != null ? pace : est.expected || 0);
+/** While a campaign runs on a plan: billed minutes so far ÷ finished attempts × the whole list. */
+function paceMinOf(c, k) {
+  const fin = (k.answered || 0) + (k.noAnswer || 0) + (k.busy || 0) + (k.failed || 0);
+  if (!['running', 'paused'].includes(c.status) || !fin || !k.total) return null;
+  return Math.round(((c.billedMin || 0) / fin) * k.total);
+}
+/**
+ * The cost card in the units the run is charged in. Without a plan: credits. On a plan (a run made on it): plan
+ * minutes first — used so far / up to (or ≈) the whole list — and the credits actually charged beside them (minutes
+ * beyond the plan minutes and extras); plan minutes are never shown as credits.
+ */
+function costView(ctx, c, k, est) {
+  const plan = est.onPlan ? activePlan() : null;
+  if (plan && c.planMin != null) {
+    const paceMin = paceMinOf(c, k);
+    const wholeMin = est.maxMin != null ? est.maxMin : paceMin != null ? paceMin : est.expMin || 0;
+    const billed = c.billedMin || 0;
+    return { plan, minutes: true, big: planMinText(ctx, c.planMin || 0, true), whole: est.maxMin != null ? ctx.t('d.wholePlan', { min: planMinText(ctx, est.maxMin, true) }) : ctx.t('d.wholePlanAbout', { min: planMinText(ctx, wholeMin, true) }),
+      pct: wholeMin ? Math.min(100, Math.round((billed / wholeMin) * 100)) : 0, pace: paceMin != null ? `≈ ${planMinText(ctx, paceMin, true)}` : null };
+  }
+  const used = k.credits != null ? k.credits : c.credits || 0;
+  const pv = paceOf(c, k);
+  const whole = wholeOf(est, pv);
+  const { t, fmt } = ctx;
+  return { plan, minutes: false, big: fmt.credits2(used), whole: est.max == null ? t('credits.aboutTotal', { n: fmt.credits2(whole) }) : plan ? t('credits.upToPlan', { n: fmt.credits2(est.max), min: planMinText(ctx, est.maxMin, true) }) : t('credits.upTo', { n: fmt.credits2(est.max) }),
+    pct: whole ? Math.min(100, Math.round((used / whole) * 100)) : 0, pace: pv != null ? `≈ ${fmt.credits2(pv)}` : null };
+}
 function costSummary(ctx, c, k, est) {
   const { t, html: h, fmt } = ctx;
-  const used = k.credits != null ? k.credits : c.credits || 0;
-  const pace = paceOf(c, k);
-  const whole = wholeOf(est, pace);
-  const pctUsed = whole ? Math.min(100, Math.round((used / whole) * 100)) : 0;
-  // On a plan: the estimate at the plan rate with its plan minutes; a run made on the plan also shows the minutes it
-  // took from the plan minutes and the credits it charged (only minutes beyond them and extras).
-  const plan = est.onPlan ? activePlan() : null;
-  const ran = plan && c.planMin != null;
-  return h`<section class="card cp-costsum" aria-labelledby="cp-cs-h"><div class="card-head"><h3 id="cp-cs-h">${t('d.cost')}</h3><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('plannedShort')}</span></div>
-    <div class="card-body stack-3"><div class="row" style="align-items:baseline;gap:6px"><span class="cp-big tnum" data-used>${fmt.credits2(used)}</span><span class="hint" data-whole>/ ${est.max == null ? t('credits.aboutTotal', { n: fmt.credits2(whole) }) : plan ? t('credits.upToPlan', { n: fmt.credits2(est.max), min: planMinText(ctx, est.maxMin, true) }) : t('credits.upTo', { n: fmt.credits2(est.max) })}</span></div>
-      <span class="progress" aria-hidden="true"><i data-used-bar style="width:${pctUsed}%"></i></span>
+  const v = costView(ctx, c, k, est);
+  const plan = v.plan;
+  return h`<section class="card cp-costsum" aria-labelledby="cp-cs-h"><div class="card-head"><h3 id="cp-cs-h">${t(v.minutes ? 'd.costPlan' : 'd.cost')}</h3><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('plannedShort')}</span></div>
+    <div class="card-body stack-3"><div class="row" style="align-items:baseline;gap:6px"><span class="cp-big tnum" data-used>${v.big}</span><span class="hint" data-whole>${v.minutes ? v.whole : `/ ${v.whole}`}</span></div>
+      <span class="progress" aria-hidden="true"><i data-used-bar style="width:${v.pct}%"></i></span>
       <div class="kv"><span class="k">${ctx.term(t('d.billedMin'), 'billing_minute')}</span><span class="v tnum" data-billed>${fmt.int(c.billedMin != null ? c.billedMin : k.answered)}</span></div>
-      ${ran ? h`<div class="kv"><span class="k">${t('d.planMin')}</span><span class="v tnum" data-planmin>${t('d.planMinV', { n: fmt.int(c.planMin) })}</span></div>
-        <div class="kv"><span class="k">${t('d.charged')}</span><span class="v tnum" data-charged>${fmt.credits2(c.charged || 0)}</span></div>` : ''}
-      ${est.expected ? h`<div class="kv"><span class="k">${t('d.expectedCost')}</span><span class="v tnum">≈ ${fmt.credits2(est.expected)}${plan ? h`<span class="hint-xs cp-block">≈ ${planMinText(ctx, est.expMin, true)}</span>` : ''}</span></div>` : ''}
+      ${v.minutes ? h`<div class="kv"><span class="k">${t('d.charged')}</span><span class="v tnum" data-charged>${fmt.credits2(c.charged || c.credits || 0)}</span></div>` : ''}
+      ${est.expected ? h`<div class="kv"><span class="k">${t('d.expectedCost')}</span><span class="v tnum">≈ ${plan ? planMinText(ctx, est.expMin, true) : fmt.credits2(est.expected)}</span></div>` : ''}
       ${plan ? h`<p class="hint-xs">${t('d.planHint', { rate: fmt.rate(plan.rate) })}</p>` : ''}
-      ${pace != null ? h`<div class="kv"><span class="k">${t('d.paceCost')}</span><span class="v tnum" data-pace>≈ ${fmt.credits2(pace)}</span></div>` : ''}
+      ${v.pace != null ? h`<div class="kv"><span class="k">${t('d.paceCost')}</span><span class="v tnum" data-pace>${v.pace}</span></div>` : ''}
       ${est.paths && est.paths.unbounded ? h`<p class="hint-xs">${t('d.noCeiling')}</p>` : est.paths && est.paths.hasTransfer ? h`<p class="hint-xs">${t('d.transferNote', { n: est.paths.capMin })}</p>` : ''}
       ${c.preSms ? h`<div class="kv cp-pre-line"><span class="k">${t('d.preSentK')}</span><span class="v tnum" data-pre>${fmt.int(preSmsSent(c, k) || 0)}</span></div>
         <p class="hint-xs">${t('d.preHint')}</p>` : ''}
@@ -1770,7 +1826,7 @@ function recipientRow(ctx, c, r, idx) {
     <td class="mono">${r.at ? fmt.time(r.at) : '—'}</td>
     <td>${r.key ? h`<span class="cp-keycap sm">${r.key}</span>${r.transferred ? h` <span class="hint-xs">${t('d.transferred')}</span>` : ''}` : '—'}</td>
     <td class="num mono">${r.sec ? fmt.duration(r.sec) : '—'}</td>
-    <td class="num mono">${fmt.credits2(r.credits || 0)}</td>
+    <td class="num mono">${fmt.credits2(r.credits || 0)}${r.planMin ? h`<span class="hint-xs cp-block">${ctx.ui.describe.plusPlanMin(r.planMin)}</span>` : ''}</td>
     <td class="num">${retryable && (c.status === 'running' || c.status === 'paused') ? h`<button type="button" class="btn btn-ghost btn-sm btn-icon" data-action="cd.row.menu" data-value="${idx}" data-phone="${r.phone}" aria-label="${t('d.rowMenu', { phone: r.phone })}" aria-haspopup="menu">${icon('more')}</button>` : ''}</td></tr>`;
 }
 
@@ -1787,7 +1843,7 @@ function openRecipient(ctx, c, phone) {
       <div class="kv"><span class="k">${t('d.r.attempt')}</span><span class="v">${r.attempt || '—'}</span></div>
       <div class="kv"><span class="k">${t('d.r.last')}</span><span class="v">${r.at ? dtProse(ctx, r.at) : '—'}</span></div>
       ${r.sip ? h`<div class="kv"><span class="k">${ctx.term('SIP', 'sip_code')}</span><span class="v mono">${r.sip}${r.q850 ? ` · Q.850 ${r.q850}` : ''}</span></div>` : ''}
-      <div class="kv"><span class="k">${t('d.r.credits')}</span><span class="v mono">${fmt.credits2(r.credits || 0)}</span></div>
+      <div class="kv"><span class="k">${t('d.r.credits')}</span><span class="v mono">${ctx.ui.describe.used(r.credits || 0, r.planMin)}</span></div>
       <p class="hint-xs">${t('att.note')}</p></div>`,
     buttons: [{ label: t('att.logs'), kind: '', onClick: () => ctx.go(`logs?src=${c.id}`) }, { label: t('common.close'), kind: 'navy' }],
   });
@@ -1853,15 +1909,13 @@ function patchDetail(root, ctx, c) {
       const b = root.querySelector(`[data-keybar="${key}"]`); if (b) b.style.width = `${Math.round(((k.keys[key] || 0) / max) * 100)}%`;
     }
   }
-  const used = root.querySelector('[data-used]'); if (used) used.textContent = fmt.credits2(k.credits || 0);
-  const est = campaignEstimate(c);
-  const whole = wholeOf(est, paceOf(c, k));
-  const ub = root.querySelector('[data-used-bar]'); if (ub && whole) ub.style.width = `${Math.min(100, Math.round(((k.credits || 0) / whole) * 100))}%`;
-  const wh = root.querySelector('[data-whole]'); if (wh && est.max == null) wh.textContent = `/ ${ctx.t('credits.aboutTotal', { n: fmt.credits2(whole) })}`;
-  const pc = root.querySelector('[data-pace]'); if (pc) { const v = paceOf(c, k); if (v != null) pc.textContent = `≈ ${fmt.credits2(v)}`; }
+  const cv = costView(ctx, c, k, campaignEstimate(c));
+  const used = root.querySelector('[data-used]'); if (used) used.textContent = cv.big;
+  const ub = root.querySelector('[data-used-bar]'); if (ub) ub.style.width = `${cv.pct}%`;
+  const wh = root.querySelector('[data-whole]'); if (wh) wh.textContent = cv.minutes ? cv.whole : `/ ${cv.whole}`;
+  const pc = root.querySelector('[data-pace]'); if (pc && cv.pace != null) pc.textContent = cv.pace;
   const billed = root.querySelector('[data-billed]'); if (billed) billed.textContent = fmt.int(c.billedMin || k.answered);
-  const pm = root.querySelector('[data-planmin]'); if (pm) pm.textContent = ctx.t('d.planMinV', { n: fmt.int(c.planMin || 0) });
-  const ch = root.querySelector('[data-charged]'); if (ch) ch.textContent = fmt.credits2(c.charged || 0);
+  const ch = root.querySelector('[data-charged]'); if (ch) ch.textContent = fmt.credits2(c.charged || c.credits || 0);
   // newest attempts slide into the table (first page, no filter)
   const ds = detState(ctx, c.id);
   const body = root.querySelector('[data-rec-body]');
@@ -1960,6 +2014,11 @@ function mountWizard(root, ctx) {
         w.audience = { ...s, file: fileName || s.file, source: fileName ? 'upload' : 'sample' };
         w.err1 = null;
         w.dnc = 'idle';
+        // "Next" pressed while the list was being read: carry it out now that the list is in.
+        if (w.nextAfterLoad) {
+          w.nextAfterLoad = false;
+          if (isWizard() && w.step === 1 && validate(ctx, w, 1)) { go(2); return; }
+        }
         if (isWizard()) ctx.rerender();
       }
     }, 60);
@@ -2005,6 +2064,8 @@ function mountWizard(root, ctx) {
     'wc.step': (el) => { const n = Number(el.dataset.value); if (n <= w.reached && n !== w.step) go(n); },
     'wc.back': () => { if (w.step > 1) go(w.step - 1); },
     'wc.next': () => {
+      // While the list is being read, the click is kept and carried out when reading ends (the button says so).
+      if (w.loading && w.step === 1) { w.nextAfterLoad = true; ctx.rerender(); return; }
       if (!validate(ctx, w, w.step)) { ctx.rerender(); const e = root.querySelector('.field-err, [aria-invalid="true"]'); if (e) { e.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' }); if (e.focus) e.focus({ preventScroll: true }); } return; }
       go(w.step + 1);
     },

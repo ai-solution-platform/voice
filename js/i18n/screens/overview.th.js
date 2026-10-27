@@ -62,7 +62,7 @@ export default {
   'tile.trial': 'นาทีทดลอง',
   'tile.creditsLine': 'ใช้ได้อีกประมาณ {days} วัน',
   'tile.creditsOwn': 'เครดิตของบัญชีย่อยนี้ · โอนเข้ามา {moved}',
-  'tile.creditLeft': 'วงเงินคงเหลือเดือนนี้',
+  'tile.creditLeft': 'ใช้ได้อีกในเดือนนี้',
   'tile.creditLeftLine': 'เรียกเก็บแล้ว {used} จาก {limit} · ออกใบแจ้งหนี้รายเดือน',
   'tile.creditsPlan': 'แพ็กเกจ {min} นาที · ใช้ไป {used}',
   'tile.creditsLive': 'เครดิตก้อนเดียวทุกช่องทาง',
@@ -153,4 +153,8 @@ export default {
   'alert.logs': 'ดูบันทึก',
   'alert.rules': 'กฎแจ้งเตือน',
   'alert.ack': 'รับทราบ',
+  'tile.leftSafety': 'เพดานรายเดือน {limit} ถึงก่อน · วงเงินเครดิต {cap}',
+  'tile.usedLinePlan': '{plan} วันนี้ · เดือนนี้: เสียง {voice} · ทุกช่องทาง {all}',
+  'tile.usedRangePlan': '{plan} · ค่าโทร เลขหมาย และทรังก์',
+  'spend.linePlan': 'เสียง {voice} · ช่องทางอื่น {other} · ไม่นับนาทีแพ็กเกจ ({plan})',
 };

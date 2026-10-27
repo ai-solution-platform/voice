@@ -11,6 +11,7 @@ import { nowMs, at as atToday, DEMO_NOW } from '../data/clock.js';
 import { PRICES, billedMinutes } from '../data/prices.js';
 import { ERRORS } from '../data/reference.js';
 import { SUBS } from '../data/active.js';
+import { activePlan, outboundRate } from '../core/actions.js';
 
 export const id = 'logs';
 export const nav = { group: 'operate', icon: 'list', labelKey: 'nav.logs' };
@@ -190,17 +191,23 @@ function costLines(ctx, c) {
   const lines = [];
   if (isLive(c)) return { lines: [t('cost.live')], total: null };
   if (c.env === 'sandbox') return { lines: [t('cost.sandbox', { min: fmt.num(c.trialMinutes || 0, 1) })], total: 0 };
-  if (c.status !== 'completed' || !c.credits) return { lines: [t('cost.notCharged')], total: 0 };
+  if (c.wizardTest) return { lines: [t('cost.wizardTest')], total: 0 };
+  if (c.status !== 'completed' || (!c.credits && !c.planMin)) return { lines: [t('cost.notCharged')], total: 0 };
   const mins = c.billedMin || billedMinutes(c.sec);
   const kind = c.source && c.source.type;
   if ((kind === 'otp' || kind === 'notification') && c.sec <= PRICES.otpMaxSec) lines.push(t('cost.otp', { price: fmt.rate(PRICES.otpPerAnsweredCall) }));
   else if (c.legs) lines.push(t('cost.legs', { a: c.legs[0], b: c.legs[1], n: c.legs[0] + c.legs[1], rate: fmt.rate(PRICES.outbound), total: fmt.credits2((c.legs[0] + c.legs[1]) * PRICES.outbound) }));
   else if (c.direction === 'inbound') lines.push(t('cost.inbound', { n: mins, rate: fmt.rate(PRICES.inbound), total: fmt.credits2(mins * PRICES.inbound) }));
-  else lines.push(t('cost.outbound', { n: mins, rate: fmt.rate(PRICES.outbound), total: fmt.credits2(mins * PRICES.outbound) }));
+  else if (c.planMin) {
+    // On a plan: the minutes come from the plan minutes (their own unit, no credits); minutes beyond them at the plan rate.
+    lines.push(t('cost.planMin', { count: c.planMin, n: fmt.int(c.planMin) }));
+    const over = Math.max(0, mins - c.planMin);
+    if (over) lines.push(t('cost.planOver', { n: over, rate: fmt.rate(outboundRate()), total: fmt.credits2(over * outboundRate()) }));
+  } else lines.push(t('cost.outbound', { n: mins, rate: fmt.rate(PRICES.outbound), total: fmt.credits2(mins * PRICES.outbound) }));
   if (c.voice === 'premium') lines.push(t('cost.premium', { n: mins, rate: fmt.rate(PRICES.premiumVoice), total: fmt.credits2(mins * PRICES.premiumVoice) }));
   if (c.recorded) lines.push(t('cost.recording', { n: mins, rate: fmt.rate(PRICES.recording), total: fmt.credits2(mins * PRICES.recording) }));
   if (c.transcribed) lines.push(t('cost.transcription', { n: mins, rate: fmt.rate(PRICES.transcription), total: fmt.credits2(mins * PRICES.transcription) }));
-  return { lines, total: c.credits };
+  return { lines, total: c.credits, planMin: c.planMin || 0 };
 }
 
 /** SIP event timeline for a call. Each event: { s, label, sip, from, to, tone }. */
@@ -630,7 +637,7 @@ function summaryTab(ctx, c) {
       </div></div>
     <section class="card card-pad lg-cost" aria-labelledby="lg-cost-h"><div class="row" style="justify-content:space-between"><h3 id="lg-cost-h">${t('f.cost')}</h3><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('plannedShort')}</span></div>
       <ul class="lg-costlines">${cost.lines.map((l) => h`<li>${l}</li>`)}</ul>
-      ${cost.total != null ? h`<div class="kv kv-total"><span class="k">${t('f.total')}</span><span class="v">${t('f.totalV', { n: fmt.credits2(cost.total) })}</span></div>` : ''}</section>
+      ${cost.total != null ? h`<div class="kv kv-total"><span class="k">${t('f.total')}</span><span class="v">${cost.planMin ? ctx.ui.describe.used(cost.total, cost.planMin) : t('f.totalV', { n: fmt.credits2(cost.total) })}</span></div>` : ''}</section>
     ${answered ? qualityBlock(ctx, c) : ''}
     ${relatedLinks(ctx, c).length ? h`<div class="stack" style="gap:8px"><span class="label">${t('dr.related')}</span><div class="row">${relatedLinks(ctx, c)}</div></div>` : ''}
     <p class="hint-xs">${icon('shield', 'ico-xs')} ${t('dr.dataNote')}</p>
@@ -812,7 +819,7 @@ function table(ctx, rows) {
         <td class="nowrap lg-subcol">${ctx.ui.describe.sub(c.sub)}</td>
         <td class="lg-stcol">${ctx.ui.describe.statusChip(c.status)}</td>
         <td class="num mono" ${raw(live ? `data-live-start="${tsOf(c)}"` : '')}>${live ? fmt.duration((nowMs() - tsOf(c)) / 1000) : c.sec ? fmt.duration(c.sec) : '—'}</td>
-        <td class="num mono">${live ? '—' : fmt.credits2(c.credits || 0)}</td>
+        <td class="num mono">${live ? '—' : fmt.credits2(c.credits || 0)}${!live && c.planMin ? h`<span class="hint-xs lg-block">${ctx.ui.describe.plusPlanMin(c.planMin)}</span>` : ''}</td>
         <td class="num lg-chev">${icon('chevron-right', 'ico-sm')}</td></tr>`;
     })}</tbody></table></div>
     <div class="card-foot row lg-pager"><span class="hint-xs grow">${live ? t('page.live', { shown: fmt.int(rows.length), total: fmt.int(ctx.store.get('today.liveTotal') || rows.length) }) : t('page.line', { from: fmt.int(p * PER_PAGE + 1), to: fmt.int(p * PER_PAGE + slice.length), total: fmt.int(rows.length) })} ${!live && ctx.store.get('mode') === 'active' ? t('page.keeps') : ''}</span>
@@ -868,6 +875,7 @@ function exportCsv(ctx) {
     { key: 'talk_seconds', label: 'talk_seconds', value: (c) => c.sec || 0 },
     { key: 'billed', label: 'billed', value: (c) => c.billedMin || 0 },
     { key: 'credits', label: 'credits', value: (c) => (c.credits || 0).toFixed(2) },
+    ...(activePlan() ? [{ key: 'plan_minutes', label: 'plan_minutes', value: (c) => c.planMin || 0 }] : []),
     { key: 'recording', label: 'recording', value: (c) => (c.recorded ? 'yes' : 'no') },
     { key: 'route', label: 'route', value: (c) => c.route || '' },
     { key: 'campaign_id', label: 'campaign_id', value: (c) => ((c.source || {}).type === 'campaign' ? c.source.ref : '') },

@@ -503,7 +503,7 @@ function wzStep5(ctx) {
       <p class="hint-xs">${t('wz.3.fix', { media: MEDIA_IPS, ports: MEDIA_PORTS })}</p>
       <p class="hint-xs">${t('wz.5.activateRule')}</p>
       <button type="button" class="btn btn-primary btn-block wz-activate ${canActivate ? 'is-ready' : ''}" data-action="wz.5.activate" ${raw(canActivate ? '' : 'aria-disabled="true" aria-describedby="wz-act-h"')}>${icon('check')}${t('wz.5.activate')}</button>
-      <span class="hint-xs" id="wz-act-h">${canActivate ? t('wz.5.ready') : c.options === 'ok' ? t('wz.5.optionsPassed') : t('wz.5.activateH')}</span>
+      <span class="hint-xs ${c.inbound === 'fail' ? 'wz-sum-fail' : ''}" id="wz-act-h" data-wz-summary>${checkSummary(ctx, c)}</span>
       <span class="sr-only" aria-live="polite">${w.live}</span>
     </div></div>`;
 }
@@ -741,9 +741,20 @@ function runChecks(ctx) {
   ctx.rerender();
 }
 
+/**
+ * One summary line for step 5 that is true to every check: "All checks passed" only when no check failed and both
+ * test calls passed; a failed check is always named (activation for outbound calls stays possible, as the rule says).
+ */
+function checkSummary(ctx, c) {
+  const { t } = ctx;
+  const canActivate = c.options === 'ok' && (c.inbound === 'ok' || c.outbound === 'ok');
+  if (c.inbound === 'fail') return canActivate ? t('wz.5.readyInFail') : t('wz.5.inFail');
+  if (!canActivate) return c.options === 'ok' ? t('wz.5.optionsPassed') : t('wz.5.activateH');
+  if (c.inbound === 'ok' && c.outbound === 'ok') return t('wz.5.allPassed');
+  return t(c.inbound === 'ok' ? 'wz.5.readyNoOut' : 'wz.5.readyNoIn');
+}
 function liveMsg(ctx, s) {
-  const c = s.wz.checks;
-  s.wz.live = c.options === 'ok' && (c.inbound === 'ok' || c.outbound === 'ok') ? ctx.t('wz.5.allPassed') : ctx.t('wz.5.optionsPassed');
+  s.wz.live = checkSummary(ctx, s.wz.checks);
 }
 
 function runInbound(ctx) {
@@ -754,23 +765,45 @@ function runInbound(ctx) {
   ctx.rerender();
   soon(ctx, (s) => {
     if (typeof stop === 'function') stop();
-    if (s.wz.firewall) { s.wz.checks.inbound = 'fail'; s.wz.live = ctx.t('wz.5.noAudio', { media: MEDIA_IPS, ports: MEDIA_PORTS }); } else { s.wz.checks.inbound = 'ok'; s.wz.at.inbound = nowMs(); liveMsg(ctx, s); logInboundTest(ctx, s.wz); }
+    if (s.wz.firewall) { s.wz.checks.inbound = 'fail'; s.wz.live = ctx.t('wz.5.noAudio', { media: MEDIA_IPS, ports: MEDIA_PORTS }); logInboundTest(ctx, s.wz, { failed: true }); } else { s.wz.checks.inbound = 'ok'; s.wz.at.inbound = nowMs(); liveMsg(ctx, s); logInboundTest(ctx, s.wz); }
     redraw(ctx, onSip);
   }, 2000);
 }
 
-/** The inbound test is a real call in the record: it lands in Logs and in the trunk's calls and Recent calls (0 credits). */
-function logInboundTest(ctx, w) {
+/**
+ * Every test call in step 5 is a real call in the record — the inbound test (answered, or failed with no audio) and
+ * the outbound test from the PBX: each lands in Logs and in the trunk's calls and Recent calls (0 credits), so the
+ * trunk's "Calls, last 24 h" counts them exactly as Logs does.
+ */
+function logInboundTest(ctx, w, { failed = false } = {}) {
   const started = nowMs() - 6000;
   addCall({
     ts: new Date(started).toISOString(), kind: 'inbound', direction: 'inbound', env: ctx.store.get('env'),
-    from: SANDBOX_CALLER, to: w.attached[0] || null, status: 'completed', sip: 200, q850: 16, sec: 4, billedMin: 0, credits: 0, trialMinutes: 0,
+    from: SANDBOX_CALLER, to: w.attached[0] || null, status: failed ? 'failed' : 'completed', sip: failed ? 408 : 200, q850: failed ? 102 : 16, sec: failed ? 0 : 4, billedMin: 0, credits: 0, trialMinutes: 0,
     pddMs: 900, keys: null, recorded: false, transcribed: false, route: 'primary', sub: (ctx.store.get('subAccounts') || [])[0]?.id || null,
     source: { type: 'trunk', ref: w.name, detail: { en: 'ext 101', th: 'เบอร์ภายใน 101', zh: '分机 101' } },
-    reason: {
+    reason: failed ? {
+      en: `Inbound test from the SIP wizard · no audio from ${w.name} (media ports blocked by a firewall) · 0 credits`,
+      th: `ทดสอบสายเข้าจากตัวช่วยตั้งค่า SIP · ไม่มีเสียงจาก ${w.name} (ไฟร์วอลล์บล็อกพอร์ตเสียง) · 0 เครดิต`,
+      zh: `SIP 设置向导的呼入测试 · ${w.name} 无音频（防火墙拦截了媒体端口）· 0 点数`,
+    } : {
       en: `Inbound test from the SIP wizard · answered by extension 101 on ${w.name} · 0 credits`,
       th: `ทดสอบสายเข้าจากตัวช่วยตั้งค่า SIP · เบอร์ภายใน 101 ของ ${w.name} รับสาย · 0 เครดิต`,
       zh: `SIP 设置向导的呼入测试 · ${w.name} 的分机 101 已接听 · 0 点数`,
+    },
+    wizardTest: true,
+  });
+}
+function logOutboundTest(ctx, w) {
+  addCall({
+    ts: new Date(nowMs() - 5000).toISOString(), kind: 'outbound', direction: 'outbound', env: ctx.store.get('env'),
+    from: w.attached[0] || SANDBOX_CALLER, to: '081-xxx-1234', status: 'completed', sip: 200, q850: 16, sec: 5, billedMin: 0, credits: 0, trialMinutes: 0,
+    pddMs: 1100, keys: null, recorded: false, transcribed: false, route: 'primary', sub: (ctx.store.get('subAccounts') || [])[0]?.id || null,
+    source: { type: 'trunk', ref: w.name, detail: { en: 'ext 101', th: 'เบอร์ภายใน 101', zh: '分机 101' } },
+    reason: {
+      en: `Outbound test from the SIP wizard · extension 101 on ${w.name} called a mobile · simulated · 0 credits`,
+      th: `ทดสอบสายโทรออกจากตัวช่วยตั้งค่า SIP · เบอร์ภายใน 101 ของ ${w.name} โทรหามือถือ · จำลอง · 0 เครดิต`,
+      zh: `SIP 设置向导的呼出测试 · ${w.name} 的分机 101 拨打了手机 · 模拟 · 0 点数`,
     },
     wizardTest: true,
   });
@@ -989,7 +1022,7 @@ export function mount(root, ctx) {
       const w = ctx.state.wz;
       w.checks.outbound = 'run';
       ctx.rerender();
-      soon(ctx, (s) => { s.wz.checks.outbound = 'ok'; s.wz.at.outbound = nowMs(); liveMsg(ctx, s); redraw(ctx, onSip); }, 2000);
+      soon(ctx, (s) => { s.wz.checks.outbound = 'ok'; s.wz.at.outbound = nowMs(); liveMsg(ctx, s); logOutboundTest(ctx, s.wz); redraw(ctx, onSip); }, 2000);
     },
     'wz.5.fail': () => {
       const w = ctx.state.wz;

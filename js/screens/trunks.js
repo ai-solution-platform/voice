@@ -424,7 +424,7 @@ function recentCard(ctx, tr) {
   return h`<section class="card tk-recent" aria-labelledby="tk-r-h"><div class="card-head"><h2 id="tk-r-h">${t('recent.title')}</h2><a class="btn btn-sm" href="${logsHref(tr)}" data-action="td.logs">${t('stats.logs')}</a></div>
     ${calls.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('recent.time')}</th><th>${t('recent.dir')}</th><th>${t('recent.party')}</th><th>${t('recent.status')}</th><th class="num">${t('recent.talk')}</th><th class="num">${t('recent.credits')}</th></tr></thead>
       <tbody>${calls.map((c) => h`<tr><td class="mono"><a href="#/logs?call=${c.id}" data-action="td.call.row">${fmt.time(c.ts)}</a></td><td>${ctx.ui.describe.direction(c)}</td>
-        <td class="mono" translate="no">${ctx.ui.describe.party(c)}</td><td>${ctx.ui.describe.statusChip(c.status)}</td><td class="num mono">${c.sec ? fmt.duration(c.sec) : '—'}</td><td class="num mono">${fmt.credits2(c.credits || 0)}</td></tr>`)}</tbody></table></div>`
+        <td class="mono" translate="no">${ctx.ui.describe.party(c)}</td><td>${ctx.ui.describe.statusChip(c.status)}</td><td class="num mono">${c.sec ? fmt.duration(c.sec) : '—'}</td><td class="num mono">${fmt.credits2(c.credits || 0)}${c.planMin ? h`<span class="hint-xs tk-block">${ctx.ui.describe.plusPlanMin(c.planMin)}</span>` : ''}</td></tr>`)}</tbody></table></div>`
       : h`<div class="empty"><span class="hint">${t('recent.none')}</span><button type="button" class="btn btn-sm" data-action="td.test" ${raw(tr.status === 'off' || tr.status === 'draft' ? 'aria-disabled="true"' : '')}>${ctx.icon('phone', 'ico-sm')}${t('testCall')}</button></div>`}</section>`;
 }
 

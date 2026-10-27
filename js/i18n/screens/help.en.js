@@ -61,7 +61,7 @@ export default {
   'hol.date': 'Date',
   'hol.name': 'Holiday',
   'hol.hours': 'Calling hours',
-  'hol.foot': 'Demo list of {n} Thai public holidays until {until}, from the Bank of Thailand holiday notices; the same list sets campaign calling windows. The Cabinet can add special holidays during the year, so check the official calendar.',
+  'hol.foot': 'Demo list: {n} Thai public holidays from today to {until} ({all} in {years}), from the Bank of Thailand holiday notices; the same list sets campaign calling windows. The Cabinet can add special holidays during the year, so check the official calendar.',
   'faq.title': 'Common questions',
   'faq.callerid.q': 'Why do calls from ANTS show your 02 number, never +66?',
   'faq.callerid.a': [
@@ -253,7 +253,7 @@ export default {
     '## How you pay',
     '- **Prepaid:** top up credits; calls draw from your balance. Auto top-up and a low-balance alert keep you running.',
     '- **Postpaid:** one invoice a month, up to a credit limit set in your contract.',
-    '- **Commitment plan:** a monthly charge for a set number of minutes at the plan rate, added automatically each cycle. Minutes above it are billed at the same plan rate; unused minutes follow your contract (expire, roll over or carry over).',
+    '- **Commitment plan:** a monthly charge for a set number of minutes at the plan rate, added automatically each cycle. Minutes above it are billed at the same plan rate; unused minutes follow your contract (expire, roll over or carry over). Plan minutes are their own balance, not credits: they never count towards Used today, Used this month or your spending limits.',
     'How you pay, and any plan, is agreed with sales in your contract. The contract also sets the credit rate (in this demo 1 credit = 1.00 baht).',
     'Outbound calls to Thai numbers cost {outbound} credits a minute; inbound calls {inbound}. Standard voices are included; premium voices add {premium} a minute.',
   ],

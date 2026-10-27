@@ -207,7 +207,7 @@ export default {
   'pre.hint': 'The preset new campaigns start with. Each preset sets calling hours, retries and recording rules together; a campaign can choose another in step 1.',
   'rec.lockedHealth': 'Always on with the Healthcare preset: health details are sensitive personal data under the PDPA (Personal Data Protection Act), so callers hear the notice before anything is recorded. Choose another preset to change this.',
   'rec.turnedOn': 'Recording notice turned on: the Healthcare preset keeps it on.',
-  'hours.listLine': 'Demo list: {n} public holidays until {until} · next: {next} ({name}). A weekday holiday ends calls at the weekend time.',
+  'hours.listLine': 'Demo list: {n} public holidays from today to {until} ({all} in {years}) · next: {next} ({name}). A weekday holiday ends calls at the weekend time.',
   'hours.listBtn': 'View holidays',
   'hol.title': 'Thai public holidays (demo list)',
   'hol.date': 'Date',

@@ -7,6 +7,8 @@ import { t, loc } from '../core/i18n.js';
 import { store } from '../core/store.js';
 import { STATUS_TONE } from '../data/reference.js';
 import { icon } from './icons.js';
+import { fmt } from '../core/format.js';
+import { activePlan } from '../core/actions.js';
 
 const STATUS_ICON = { completed: 'check-circle', 'no-answer': 'phone-off', busy: 'minus', failed: 'alert', rejected: 'x-circle', canceled: 'x', ringing: 'phone', queued: 'clock', 'in-progress': 'phone-call', playing: 'wave' };
 
@@ -47,4 +49,23 @@ export function direction(call) {
 /** The customer's side of a call (masked). */
 export const party = (call) => (call.direction === 'inbound' ? call.from : call.to);
 
-export const describe = { statusChip, sub, source, direction, party };
+/**
+ * Usage in its own units — the one wording every screen uses: "1,022.67 credits", or on a plan
+ * "0.00 credits · 1,033 plan minutes" (credits = what is charged; plan minutes are never counted as credits).
+ * planMin: minutes taken from the plan minutes. The plan part shows when there are plan minutes, or always on a
+ * plan account when { plan: true } (totals such as Used today).
+ */
+export function used(credits, planMin = 0, { plan = false } = {}) {
+  const c = fmt.credits2(credits || 0);
+  const n = Math.round(planMin || 0);
+  if (n > 0 || (plan && activePlan())) return t('bm.used', { credits: c, n: fmt.int(n), count: n });
+  return t('common.creditsN', { n: c });
+}
+/** "+ 1,287 plan minutes" under a credits figure (tiles), or '' when there is no plan and no plan minutes. */
+export function plusPlanMin(planMin = 0, { plan = true } = {}) {
+  const n = Math.round(planMin || 0);
+  if (n > 0 || (plan && activePlan())) return t('bm.plusMin', { n: fmt.int(n), count: n });
+  return '';
+}
+
+export const describe = { statusChip, sub, source, direction, party, used, plusPlanMin };

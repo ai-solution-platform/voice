@@ -175,6 +175,9 @@ export default {
   'bm.chip.nearLimit': 'Near your credit limit',
   'bm.planLine': '{min}-minute plan · {rate} per minute · {charge} credits a month · the plan minutes, kept apart from your credits, renew on day {day} of each month',
   'bm.overageLine': 'Beyond {min} minutes: {rate} per minute (the plan rate)',
+  // One wording for usage on a plan, on every screen: credits are what is charged; plan minutes are their own unit.
+  'bm.used': { one: '{credits} credits · {n} plan minute', other: '{credits} credits · {n} plan minutes' },
+  'bm.plusMin': { one: '+ {n} plan minute', other: '+ {n} plan minutes' },
   'bm.policy.expire': 'Unused minutes expire at the end of each month (per your contract)',
   'bm.policy.rollover': 'Unused minutes roll over to the next month (per your contract)',
   'bm.policy.carry': 'Unused minutes carry over for up to {months} months (per your contract)',
@@ -321,7 +324,7 @@ export default {
   'toast.T03': 'Draft saved',
   'toast.T04': 'Downloaded {file}',
   'toast.T05': 'Exported {n} rows (current filter)',
-  'toast.T06': 'Test call completed · {dur} · {credits} credits',
+  'toast.T06': 'Test call completed · {dur} · {used}',
   'toast.T07': "Key {name} created. Copy it now — it's shown once.",
   'toast.T08': 'Key {name} revoked. Requests that use it now fail with 401.',
   'toast.T09': 'New key for {name} is shown once. The old key works for 24 hours.',

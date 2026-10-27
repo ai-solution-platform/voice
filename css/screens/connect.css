@@ -105,3 +105,6 @@ input[type="range"] { accent-color: var(--orange); }
   .cn-cfg .wkv { grid-template-columns: minmax(0, 1fr) auto; }
   .cn-cfg .wkv > .hint { grid-column: 1 / -1; }
 }
+
+/* step 5: a failed check is named in the summary under Activate */
+.wz-sum-fail { color: var(--red-fill); font-weight: 600; }

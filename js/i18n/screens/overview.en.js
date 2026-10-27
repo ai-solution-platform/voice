@@ -64,7 +64,7 @@ export default {
   'tile.trial': 'Trial minutes',
   'tile.creditsLine': 'About {days} days left at this pace',
   'tile.creditsOwn': 'This sub-account’s own credits · {moved} moved in',
-  'tile.creditLeft': 'Credit left this month',
+  'tile.creditLeft': 'Left to spend this month',
   'tile.creditLeftLine': '{used} billed of {limit} · invoiced monthly',
   'tile.creditsPlan': 'Plan {min} min · {used} used',
   'tile.creditsLive': 'One balance for every channel',
@@ -162,4 +162,8 @@ export default {
   'alert.logs': 'View logs',
   'alert.rules': 'Alert rules',
   'alert.ack': 'Acknowledge',
+  'tile.leftSafety': 'Safety limit {limit} applies first · credit limit {cap}',
+  'tile.usedLinePlan': '{plan} today · this month: voice {voice} · all channels {all}',
+  'tile.usedRangePlan': '{plan} · voice calls, numbers and trunks',
+  'spend.linePlan': 'Voice {voice} · other channels {other} · plan minutes are not counted ({plan})',
 };

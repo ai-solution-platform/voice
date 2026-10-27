@@ -133,4 +133,8 @@ export default {
   'custom.bad': '请选择不晚于结束日期、且在数据范围内的开始日期。',
   'custom.hint': '可用数据范围：{from} 至 {to}。',
   'custom.apply': '应用',
+  'chart.costTipPlan': '{day} · {used}',
+  'chart.costNotePlan': '使用套餐时，从套餐分钟扣除的呼出分钟不消耗点数，单独显示为套餐分钟。',
+  'subs.planMin': '套餐分钟',
+  'subs.planFoot': '套餐分钟是单独余额，不是点数。',
 };

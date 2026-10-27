@@ -12,7 +12,7 @@ import { PRICES } from '../data/prices.js';
 import { ARTICLES, ERRORS, STATUS_CODES } from '../data/reference.js';
 import { API_BASE, SIP_HOST } from '../data/edge.js';
 import { WEBHOOK_RETRY } from '../data/active.js';
-import { HOLIDAYS as THAI_HOLIDAYS, holidayOn, holidaysFrom, ymdOf } from '../data/holidays.js';
+import { HOLIDAYS as THAI_HOLIDAYS, holidayOn, holidaysFrom, ymdOf, holidayYears, HOLIDAY_RANGE } from '../data/holidays.js';
 
 export const id = 'help';
 export const nav = { group: 'account', icon: 'help', labelKey: 'nav.help' };
@@ -251,7 +251,7 @@ function articleExtras(ctx, a) {
     const next = holidaysFrom(ymdOf(nowMs())).slice(0, 6);
     return h`<h2>${t('hol.title')}</h2><div class="tbl-wrap hp-hol"><table class="tbl"><thead><tr><th>${t('hol.date')}</th><th>${t('hol.name')}</th><th>${t('hol.hours')}</th></tr></thead><tbody>
       ${next.map((x) => h`<tr><td class="nowrap">${fmt.dateProse(x.date, true)}</td><td>${locOf(x.name)}</td><td class="mono nowrap">08:00–18:00</td></tr>`)}</tbody></table></div>
-      <p class="hint-xs">${t('hol.foot', { n: fmt.int(THAI_HOLIDAYS.length), until: fmt.dateProse(THAI_HOLIDAYS[THAI_HOLIDAYS.length - 1].date) })}</p>`;
+      <p class="hint-xs">${t('hol.foot', { n: fmt.int(holidaysFrom(ymdOf(nowMs())).length), all: fmt.int(THAI_HOLIDAYS.length), years: holidayYears(getLang()), until: fmt.dateProse(HOLIDAY_RANGE.to) })}</p>`;
   }
   if (a.slug === 'volume-plans') {
     return h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('vp.minutes')}</th><th class="num">${t('vp.rate')}</th><th>${t('vp.terms')}</th></tr></thead><tbody>

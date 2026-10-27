@@ -2,7 +2,8 @@
 // reqId: 'req_…' (or true = derive one from the route + message). Every error toast gets one automatically: it shows
 // "Request ID req_… [Copy]" (see reqid.js) and, like all errors, stays until closed.
 // Bottom right on desktop — top centre while a modal or drawer is open, so it never sits on the dialog's own
-// buttons — and top on a phone. Max 3 stacked. Auto-dismiss after max(4 s, 500 ms per word), capped at 8 s,
+// buttons. Max 3 stacked. Phone: one at a time (the newest replaces the last), at the bottom above the Demo pill —
+// or at the top while a bottom sheet, a drawer or the full-screen dialer is open, so it never covers their buttons. Auto-dismiss after max(4 s, 500 ms per word), capped at 8 s,
 // paused while the pointer really moves over it (not when it simply appears under a resting pointer) or it has focus. Toasts with an action, and all errors, stay until closed — except an
 // Undo toast: { action, timeout: 10000 } closes after 10 s and shows the countdown on its button.
 // role=status (polite) for success/info, role=alert for errors. Copy actions never toast (see clipboard.js).
@@ -31,7 +32,8 @@ function container() {
 export function toast(message, { kind = 'info', sub = '', action = null, demo = false, timeout, reqId = null } = {}) {
   const c = container();
   const rid = typeof reqId === 'string' ? reqId : (reqId || kind === 'error') ? makeReqId(`${location.hash.replace(/^#\/?/, '').split('?')[0]}|${message}`) : null;
-  while (c.children.length >= 3) c.firstElementChild.remove();
+  const max = matchMedia('(max-width: 767px)').matches ? 1 : 3;
+  while (c.children.length >= max) c.firstElementChild.remove();
   const node = toEl(html`<div class="toast toast-${kind}${action ? ' has-action' : ''}${rid ? ' has-req' : ''}" role="${kind === 'error' ? 'alert' : 'status'}" aria-live="${kind === 'error' ? 'assertive' : 'polite'}">
     ${icon(ICON[kind] || 'info')}
     <div class="tt">${message}${demo ? html` <span class="chip chip-navy" style="margin-left:4px;background:rgba(255,255,255,.14);color:#fff">${t('common.demoTag')}</span>` : ''}${sub ? html`<small>${sub}</small>` : ''}${rid ? html`<small class="rq-toast">${reqIdLine(rid)}</small>` : ''}</div>

@@ -5,7 +5,7 @@
 // Totals come from the store: 7 days = the sample 7-day report exactly, today = Overview's tiles, 30 days = the series.
 
 import { html as h, raw, reducedMotion } from '../core/dom.js';
-import { isActive } from '../core/actions.js';
+import { isActive, activePlan, planMinutesIn } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
 
 export const id = 'reports';
@@ -73,11 +73,12 @@ function subId(ctx) { return SUB_KEYS[ctx.state.sub] || null; }
 function share(ctx) {
   const sid = subId(ctx);
   const by = (ctx.store.get('reports') || {}).bySub || [];
-  if (!sid || !by.length) return { calls: 1, credits: 1 };
+  if (!sid || !by.length) return { calls: 1, credits: 1, planMin: 1 };
   const tc = by.reduce((s, x) => s + x.calls, 0);
   const tcr = by.reduce((s, x) => s + x.credits, 0);
+  const tpm = by.reduce((s, x) => s + (x.planMin || 0), 0) || 1;
   const row = by.find((x) => x.sub === sid);
-  return row ? { calls: row.calls / tc, credits: row.credits / tcr } : { calls: 1, credits: 1 };
+  return row ? { calls: row.calls / tc, credits: row.credits / tcr, planMin: (row.planMin || 0) / tpm } : { calls: 1, credits: 1, planMin: 1 };
 }
 
 function splitGroups(nc) {
@@ -107,17 +108,18 @@ function build(ctx) {
     const fb = distribute(fbBase, HOUR_NC).map((v, i) => v + (i === HOURS.length - 1 ? nc.failed503 : 0));
     // keep each hour consistent: answered + not connected = calls
     const credits = distribute(Math.round(d.credits * 100), HOUR_W).map((c) => c / 100);
+    const pmin = distribute(Math.round(d.planMin || 0), HOUR_W);
     points = HOURS.map((hh, i) => {
       const notC = na[i] + bd[i] + fb[i];
-      return { key: `${d.date}T${hh}`, date: d.date, hour: hh, calls: ans[i] + notC, answered: ans[i], na: na[i], bd: bd[i], fb: fb[i], credits: credits[i], pdd: HOUR_PDD[i], talk: 80 + i * 2 };
+      return { key: `${d.date}T${hh}`, date: d.date, hour: hh, calls: ans[i] + notC, answered: ans[i], na: na[i], bd: bd[i], fb: fb[i], credits: credits[i], planMin: pmin[i], pdd: HOUR_PDD[i], talk: 80 + i * 2 };
     });
     tiles = {
       outAnswered: d.outAnswered, outCalls: d.outCalls, otpAns: d.otpAnswered, otpSent: d.otpSent, inAns: d.inAnswered, inCalls: d.inCalls,
-      talk: AVG.today.talk, talkIn: AVG.today.talkIn, pdd: AVG.today.pdd, peak: rep.pddPeak, calls: today.calls, outbound: today.outbound, otp: today.otpNotif, inbound: today.inbound, credits: d.credits,
+      talk: AVG.today.talk, talkIn: AVG.today.talkIn, pdd: AVG.today.pdd, peak: rep.pddPeak, calls: today.calls, outbound: today.outbound, otp: today.otpNotif, inbound: today.inbound, credits: d.credits, planMin: Math.round(d.planMin || 0),
     };
     // Same weekday last week, over the same span (00:00 to now), so today-so-far is compared like for like.
     const base = (series[series.length - 8]) || null;
-    if (base) prev = { label: 'prevWeekday', date: base.date, rate: (base.outAnswered / base.outCalls) * 100, credits: r2(base.credits * SHARE_TO_NOW), calls: Math.round(base.calls * SHARE_TO_NOW) };
+    if (base) prev = { label: 'prevWeekday', date: base.date, rate: (base.outAnswered / base.outCalls) * 100, credits: r2(base.credits * SHARE_TO_NOW), planMin: Math.round((base.planMin || 0) * SHARE_TO_NOW), calls: Math.round(base.calls * SHARE_TO_NOW) };
     const [busy, declined, canceled] = distribute(nc.busy, [548, 176, 22]);
     reasons = [
       { key: 'noAnswer', code: 'SIP 480 / 487 · Q.850 19', calls: nc.noAnswer - nc.phoneOff },
@@ -140,7 +142,7 @@ function build(ctx) {
     if (!days.length) days = series.slice(-1);
     points = days.map((d) => {
       const g = splitGroups(d.calls - d.answered);
-      return { key: d.date, date: d.date, calls: d.calls, answered: d.answered, ...g, outCalls: d.outCalls, outAnswered: d.outAnswered, credits: d.credits, pdd: pddOf(d.date), talk: talkOf(d.date) };
+      return { key: d.date, date: d.date, calls: d.calls, answered: d.answered, ...g, outCalls: d.outCalls, outAnswered: d.outAnswered, credits: d.credits, planMin: Math.round(d.planMin || 0), pdd: pddOf(d.date), talk: talkOf(d.date) };
     });
     const sum = (k) => days.reduce((s, d) => s + d[k], 0);
     const is7 = range === '7d';
@@ -149,7 +151,7 @@ function build(ctx) {
     tiles = {
       outAnswered: sum('outAnswered'), outCalls: sum('outCalls'), otpAns: sum('otpAnswered'), otpSent: sum('otpSent'), inAns: sum('inAnswered'), inCalls: sum('inCalls'),
       talk: avg.talk, talkIn: avg.talkIn, pdd: avg.pdd, peak: range === '30d' || is7 || days.some((d) => d.date === '2026-10-27') ? rep.pddPeak : null,
-      calls: sum('calls'), outbound: sum('outCalls'), otp: sum('otpSent'), inbound: sum('inCalls'), credits: r2(sum('credits')),
+      calls: sum('calls'), outbound: sum('outCalls'), otp: sum('otpSent'), inbound: sum('inCalls'), credits: r2(sum('credits')), planMin: planMinutesIn(days),
     };
     if (is7) tiles.credits = rep.credits;
     const n = days.length;
@@ -157,7 +159,7 @@ function build(ctx) {
     const before = idx >= n ? series.slice(idx - n, idx) : [];
     if (before.length === n) {
       const s2 = (k) => before.reduce((s, d) => s + d[k], 0);
-      prev = { label: 'prevPeriod', rate: (s2('outAnswered') / s2('outCalls')) * 100, credits: r2(s2('credits')), calls: s2('calls') };
+      prev = { label: 'prevPeriod', rate: (s2('outAnswered') / s2('outCalls')) * 100, credits: r2(s2('credits')), planMin: planMinutesIn(before), calls: s2('calls') };
     }
     const nc = sum('calls') - sum('answered');
     const parts = is7 ? rep.reasons.map((x) => x.calls) : distribute(nc, rep.reasons.map((x) => x.calls));
@@ -168,7 +170,8 @@ function build(ctx) {
     const sc = (v) => Math.round(v * sh.calls);
     for (const k of ['outAnswered', 'outCalls', 'otpAns', 'otpSent', 'inAns', 'inCalls', 'calls', 'outbound', 'otp', 'inbound']) tiles[k] = sc(tiles[k]);
     tiles.credits = r2(tiles.credits * sh.credits);
-    points = points.map((p) => ({ ...p, calls: sc(p.na + p.bd + p.fb + p.answered), answered: sc(p.answered), na: sc(p.na), bd: sc(p.bd), fb: sc(p.fb), outCalls: p.outCalls == null ? null : sc(p.outCalls), outAnswered: p.outAnswered == null ? null : sc(p.outAnswered), credits: r2(p.credits * sh.credits) }))
+    tiles.planMin = Math.round((tiles.planMin || 0) * sh.planMin);
+    points = points.map((p) => ({ ...p, calls: sc(p.na + p.bd + p.fb + p.answered), answered: sc(p.answered), na: sc(p.na), bd: sc(p.bd), fb: sc(p.fb), outCalls: p.outCalls == null ? null : sc(p.outCalls), outAnswered: p.outAnswered == null ? null : sc(p.outAnswered), credits: r2(p.credits * sh.credits), planMin: Math.round((p.planMin || 0) * sh.planMin) }))
       .map((p) => ({ ...p, calls: p.answered + p.na + p.bd + p.fb }));
     const parts = distribute(Math.round(reasons.reduce((s, r) => s + r.calls, 0) * sh.calls), reasons.map((r) => r.calls));
     reasons = reasons.map((r, i) => ({ ...r, calls: parts[i] }));
@@ -219,6 +222,9 @@ function rangeQuery(ctx) {
   return st.range === 'custom' ? `range=custom&from=${st.from}&to=${st.to}` : `range=${st.range}`;
 }
 
+/** A previous period's call usage in the one wording: credits, and on a plan the plan minutes too. */
+const prevUsed = (ctx, p) => (activePlan() ? ctx.ui.describe.used(p.credits, p.planMin, { plan: true }) : ctx.fmt.credits2(p.credits));
+
 function tilesCard(ctx, d) {
   const { t, fmt } = ctx;
   const tl = d.tiles;
@@ -237,7 +243,7 @@ function tilesCard(ctx, d) {
     ${tile('talk', null, t('dur', { m: Math.floor(tl.talk / 60), s: tl.talk % 60 }), t('tile.talkLine', { m: Math.floor(tl.talkIn / 60), s: tl.talkIn % 60 }), `#/logs?status=completed&${rq}`)}
     ${tile('pdd', 'pdd', t('sec', { n: fmt.num(tl.pdd, 1) }), tl.peak ? t('tile.pddPeak', { n: fmt.num(tl.peak.sec, 1), day: fmt.dayMonth(tl.peak.at), time: fmt.timeShort(tl.peak.at) }) : t('tile.pddTarget'), `#/logs?${rq}&sort=pdd`)}
     ${tile('calls', null, fmt.int(tl.calls), t('tile.callsLine', { out: fmt.int(tl.outbound), otp: fmt.int(tl.otp), inb: fmt.int(tl.inbound) }), `#/logs?${rq}`)}
-    ${tile('credits', 'billing_minute', fmt.credits2(tl.credits), h`${t('tile.creditsLine')}${d.prev && !subId(ctx) ? h`<br>${d.prev.label === 'prevWeekday' ? t('tile.creditsPrevDay', { n: fmt.credits2(d.prev.credits), label: prevLabel() }) : t('tile.creditsPrev', { n: fmt.credits2(d.prev.credits) })}` : ''}`, `#/logs?${rq}&sort=credits`)}
+    ${tile('credits', 'billing_minute', fmt.credits2(tl.credits), h`${activePlan() ? h`<span class="strong" data-rp="planmin">${ctx.ui.describe.plusPlanMin(tl.planMin)}</span><br>` : ''}${t('tile.creditsLine')}${d.prev && !subId(ctx) ? h`<br>${d.prev.label === 'prevWeekday' ? t('tile.creditsPrevDay', { n: prevUsed(ctx, d.prev), label: prevLabel() }) : t('tile.creditsPrev', { n: prevUsed(ctx, d.prev) })}` : ''}`, `#/logs?${rq}&sort=credits`)}
   </div>
   <p class="hint-xs rp-def">${ctx.icon('info', 'ico-xs')} ${t('def.answerRate')}</p>`;
 }
@@ -274,14 +280,16 @@ function lineCard(ctx, d, kind) {
   const href = (p) => (d.hourly ? `#/logs?date=${p.date}&hour=${p.hour}${isCost ? '' : '&sort=pdd'}` : `#/logs?date=${p.date}${isCost ? '' : '&sort=pdd'}`);
   const sum = values.reduce((a, b) => a + b, 0);
   const peakI = values.indexOf(Math.max(...values));
+  const onPlan = isCost && !!activePlan();
+  const planSum = onPlan ? pts.reduce((a, p) => a + (p.planMin || 0), 0) : 0;
   const chart = ctx.ui.chart.line({
     labels, values, format, showValues: pts.length <= 10, height: 220,
     ariaLabel: isCost ? t(d.hourly ? 'chart.costAriaHour' : 'chart.costAria', { total: fmt.credits2(sum), peak: labels[peakI] }) : t('chart.pddAria', { peak: fmt.num(values[peakI], 1), at: labels[peakI] }),
-    links: pts.map((p, i) => ({ href: href(p), action: isCost ? 'rp.chart.cost' : 'rp.chart.pdd', tip: isCost ? t('chart.costTip', { day: labels[i], credits: fmt.credits2(p.credits) }) : t('chart.pddTip', { day: labels[i], n: fmt.num(p.pdd, 1) }) })),
+    links: pts.map((p, i) => ({ href: href(p), action: isCost ? 'rp.chart.cost' : 'rp.chart.pdd', tip: isCost ? (onPlan ? t('chart.costTipPlan', { day: labels[i], used: ctx.ui.describe.used(p.credits, p.planMin, { plan: true }) }) : t('chart.costTip', { day: labels[i], credits: fmt.credits2(p.credits) })) : t('chart.pddTip', { day: labels[i], n: fmt.num(p.pdd, 1) }) })),
   });
   return h`<div class="card rp-line"><div class="card-head"><h2>${isCost ? t(d.hourly ? 'chart.costHour' : 'chart.cost') : ctx.term(t('chart.pdd'), 'pdd')}</h2>
-      <span class="hint">${isCost ? t('chart.costTotal', { total: fmt.credits2(sum) }) : t('chart.pddTarget')}</span></div>
-    <div class="card-body">${chart}${isCost ? h`<p class="hint-xs">${t('chart.costNote')}</p>` : ''}</div></div>`;
+      <span class="hint">${isCost ? (onPlan ? ctx.ui.describe.used(sum, planSum, { plan: true }) : t('chart.costTotal', { total: fmt.credits2(sum) })) : t('chart.pddTarget')}</span></div>
+    <div class="card-body">${chart}${isCost ? h`<p class="hint-xs">${onPlan ? h`${t('chart.costNotePlan')} ` : ''}${t('chart.costNote')}</p>` : ''}</div></div>`;
 }
 
 function reasonsCard(ctx, d) {
@@ -310,22 +318,24 @@ function subCard(ctx, d) {
   const full = subId(ctx) ? buildAll(ctx) : d;
   const callsParts = range === '7d' ? by.map((x) => x.calls) : distribute(full.tiles.calls, by.map((x) => x.calls));
   const centParts = range === '7d' ? by.map((x) => Math.round(x.credits * 100)) : distribute(Math.round(full.tiles.credits * 100), by.map((x) => x.credits));
-  const rows = by.map((b, i) => ({ ...b, calls: callsParts[i], credits: centParts[i] / 100, billedMin: b.billedMin == null ? null : Math.round(b.billedMin * k), otp: b.otpAnswered ? Math.round(b.otpAnswered * k) : null }));
+  const onPlan = !!activePlan();
+  const pmParts = !onPlan ? by.map(() => 0) : range === '7d' ? by.map((x) => x.planMin || 0) : distribute(Math.round(full.tiles.planMin || 0), by.map((x) => x.planMin || 0));
+  const rows = by.map((b, i) => ({ ...b, calls: callsParts[i], credits: centParts[i] / 100, planMin: pmParts[i], billedMin: b.billedMin == null ? null : Math.round(b.billedMin * k), otp: b.otpAnswered ? Math.round(b.otpAnswered * k) : null }));
 
   const totalCredits = rows.reduce((s, r) => s + r.credits, 0) || 1;
   const sid = subId(ctx);
   return h`<section class="card rp-subs" aria-labelledby="rp-subs-h"><div class="card-head"><h2 id="rp-subs-h">${t('subs.title')}</h2><span class="chip chip-info" tabindex="0" data-tip-key="term.subaccount">${t('preview')}</span></div>
-    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('subs.sub')}</th><th class="num">${t('subs.calls')}</th><th class="num">${t('subs.min')}</th><th class="num">${t('subs.credits')}</th><th>${t('subs.share')}</th></tr></thead>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('subs.sub')}</th><th class="num">${t('subs.calls')}</th><th class="num">${t('subs.min')}</th><th class="num">${t('subs.credits')}</th>${onPlan ? h`<th class="num">${t('subs.planMin')}</th>` : ''}<th>${t('subs.share')}</th></tr></thead>
     <tbody>${rows.map((r) => {
       const key = Object.keys(SUB_KEYS).find((x) => SUB_KEYS[x] === r.sub);
       const pct = Math.round((r.credits / totalCredits) * 100);
       return h`<tr class="rp-click ${sid === r.sub ? 'is-sel' : ''}" data-action="rp.sub.row" data-value="${key}" tabindex="0" aria-selected="${sid === r.sub}">
         <td class="strong">${ctx.ui.describe.sub(r.sub)}</td><td class="num mono">${fmt.int(r.calls)}</td>
         ${r.billedMin != null ? h`<td class="num mono">${fmt.int(r.billedMin)}</td>` : h`<td class="num"><span class="hint-xs">${t('subs.otp', { n: fmt.int(r.otp || 0) })}</span></td>`}
-        <td class="num mono">${fmt.credits2(r.credits)}</td><td><span class="row-tight nowrap"><span class="progress rp-share"><i style="width:${pct}%"></i></span><span class="hint-xs tnum">${pct}%</span></span></td></tr>`;
+        <td class="num mono">${fmt.credits2(r.credits)}</td>${onPlan ? h`<td class="num mono">${fmt.int(r.planMin || 0)}</td>` : ''}<td><span class="row-tight nowrap"><span class="progress rp-share"><i style="width:${pct}%"></i></span><span class="hint-xs tnum">${pct}%</span></span></td></tr>`;
     })}
-    <tr class="rp-total"><td>${t('subs.total')}</td><td class="num mono">${fmt.int(rows.reduce((s, r) => s + r.calls, 0))}</td><td></td><td class="num mono">${fmt.credits2(rows.reduce((s, r) => s + r.credits, 0))}</td><td></td></tr></tbody></table></div>
-    <div class="card-foot hint-xs">${t('subs.foot')}${sid ? h` · <button type="button" class="linkbtn" data-action="rp.sub.clear">${t('subs.clear')}</button>` : ''}</div></section>`;
+    <tr class="rp-total"><td>${t('subs.total')}</td><td class="num mono">${fmt.int(rows.reduce((s, r) => s + r.calls, 0))}</td><td></td><td class="num mono">${fmt.credits2(rows.reduce((s, r) => s + r.credits, 0))}</td>${onPlan ? h`<td class="num mono">${fmt.int(rows.reduce((s, r) => s + (r.planMin || 0), 0))}</td>` : ''}<td></td></tr></tbody></table></div>
+    <div class="card-foot hint-xs">${t('subs.foot')}${onPlan ? ` ${t('subs.planFoot')}` : ''}${sid ? h` · <button type="button" class="linkbtn" data-action="rp.sub.clear">${t('subs.clear')}</button>` : ''}</div></section>`;
 }
 
 function campaignsCard(ctx) {
@@ -344,7 +354,7 @@ function campaignsCard(ctx) {
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('camp.name')}</th><th class="num">${t('camp.toCall')}</th><th class="num">${ctx.term(t('camp.answered'), 'answer_rate')}</th><th class="num">${t('camp.credits')}</th><th>${t('camp.status')}</th></tr></thead>
     <tbody>${list.map((c) => h`<tr class="rp-click" data-action="rp.camp.row" data-value="${c.id}" tabindex="0">
       <td><a class="strong" href="#/campaigns/${c.id}" data-action="rp.camp.link">${ctx.loc(c.name)}</a></td><td class="num mono">${fmt.int(toCall(c))}</td>
-      <td class="num mono">${fmt.pct(rate(c))}${c.status === 'running' ? h` <span class="hint-xs">${t('camp.soFar')}</span>` : ''}</td><td class="num mono">${fmt.credits2(c.credits || 0)}</td><td>${chip(c)}</td></tr>`)}</tbody></table></div></section>`;
+      <td class="num mono">${fmt.pct(rate(c))}${c.status === 'running' ? h` <span class="hint-xs">${t('camp.soFar')}</span>` : ''}</td><td class="num mono">${c.planMin ? ctx.ui.describe.used(c.credits || 0, c.planMin) : fmt.credits2(c.credits || 0)}</td><td>${chip(c)}</td></tr>`)}</tbody></table></div></section>`;
 }
 
 function emptyView(ctx) {
@@ -398,11 +408,11 @@ function exportCsv(ctx) {
   if (d) {
     // answer_rate = answered ÷ finished (answered + no answer + busy + failed), all channels, as in the Outcomes chart;
     // outbound_answer_rate is the "Answer rate (outbound)" tile. Daily rows only carry the outbound split.
-    lines.push([d.hourly ? 'hour' : 'date', 'calls', 'answered', 'no_answer', 'busy_or_declined', 'failed_or_not_dialled', 'answer_rate', 'outbound_calls', 'outbound_answered', 'outbound_answer_rate', 'talk_seconds_avg', 'pdd_avg', 'credits'].join(','));
+    lines.push([d.hourly ? 'hour' : 'date', 'calls', 'answered', 'no_answer', 'busy_or_declined', 'failed_or_not_dialled', 'answer_rate', 'outbound_calls', 'outbound_answered', 'outbound_answer_rate', 'talk_seconds_avg', 'pdd_avg', 'credits', ...(activePlan() ? ['plan_minutes'] : [])].join(','));
     for (const p of d.points) {
       const all = p.answered + p.na + p.bd + p.fb;
       const out = p.outCalls ? (p.outAnswered / p.outCalls).toFixed(3) : '';
-      lines.push([d.hourly ? `${p.date}T${p.hour}:00:00+07:00` : p.date, all, p.answered, p.na, p.bd, p.fb, all ? (p.answered / all).toFixed(3) : '', p.outCalls ?? '', p.outAnswered ?? '', out, p.talk, p.pdd.toFixed(1), p.credits.toFixed(2)].map(cell).join(','));
+      lines.push([d.hourly ? `${p.date}T${p.hour}:00:00+07:00` : p.date, all, p.answered, p.na, p.bd, p.fb, all ? (p.answered / all).toFixed(3) : '', p.outCalls ?? '', p.outAnswered ?? '', out, p.talk, p.pdd.toFixed(1), p.credits.toFixed(2), ...(activePlan() ? [p.planMin || 0] : [])].map(cell).join(','));
       n += 1;
     }
     lines.push('');

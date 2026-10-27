@@ -24,6 +24,7 @@ import { SANDBOX_CALLER, SANDBOX_CALLER_E164, API_BASE, DEFAULT_WEBHOOK } from '
 import { tones, tts, words as splitWords, unlock, setMuted, isMuted } from './audio.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
+import { used as usedText } from './describe.js';
 import { modal } from './modal.js';
 import { copy } from './io.js';
 import { pushLayer, layersRoot } from './overlay.js';
@@ -183,7 +184,7 @@ ${JSON.stringify(body, null, 2)}</pre></div>`;
       <strong>${good ? t('dialer.sumDone') : t(`dialer.sum.${r.status}`)}</strong>
       <div class="kv"><span class="k">${t('dialer.sumDuration')}</span><span class="v tnum">${fmt.duration(r.sec)}</span></div>
       <div class="kv"><span class="k">${t('dialer.sumPdd')}</span><span class="v tnum">${r.pddMs == null ? '—' : t('common.seconds', { n: fmt.num(r.pddMs / 1000, 1) })}</span></div>
-      <div class="kv"><span class="k">${t('dialer.sumCost')}</span><span class="v tnum">${r.env === 'sandbox' ? t('dialer.sumTrial', { min: fmt.num(r.trialMinutes || 0, 1) }) : t('common.creditsN', { n: fmt.credits2(r.credits) })}</span></div>
+      <div class="kv"><span class="k">${t('dialer.sumCost')}</span><span class="v tnum">${r.env === 'sandbox' ? t('dialer.sumTrial', { min: fmt.num(r.trialMinutes || 0, 1) }) : usedText(r.credits, r.planMin)}</span></div>
       <div class="kv"><span class="k">${t('dialer.callId')}</span><span class="v mono" translate="no" style="font-size:var(--fs-xs)">${r.id} <button type="button" class="copybtn" data-action="dl.sum.copy" aria-label="${t('common.copy')}" data-tip-key="common.copy" style="width:26px;height:26px;display:inline-grid;vertical-align:middle">${icon('copy', 'ico-xs')}</button></span></div>
       <div class="row" style="margin-top:6px"><button type="button" class="btn btn-primary btn-sm" data-action="dl.sum.logs">${icon('list')}${t('dialer.openLogs')}</button>
       <button type="button" class="btn btn-sm" data-action="dl.sum.again">${icon('refresh')}${t('dialer.again')}</button></div>
@@ -390,8 +391,9 @@ ${JSON.stringify(body, null, 2)}</pre></div>`;
     setPhase('ended');
     if (answered) setStep('testCall', 'done');
     notify('testCall', { vars: { status: result, number: s.to }, href: `logs?call=${rec.id}` });
-    const credits = e === 'sandbox' ? '0' : fmt.credits2(rec.credits);
-    toast(answered ? t('toast.T06', { dur: fmt.duration(sec), credits }) : t('dialer.toastOther', { status: t(`status.${result}`) }), {
+    // What it used, in its own units: credits, and on a plan the plan minutes too (never shown as credits).
+    const used = e === 'sandbox' ? t('common.creditsN', { n: '0' }) : usedText(rec.credits, rec.planMin);
+    toast(answered ? t('toast.T06', { dur: fmt.duration(sec), used }) : t('dialer.toastOther', { status: t(`status.${result}`) }), {
       kind: answered ? 'success' : 'info',
       action: { label: t('dialer.viewInLogs'), onClick: () => go(`logs?call=${rec.id}`) },
     });

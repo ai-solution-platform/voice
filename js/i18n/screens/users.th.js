@@ -105,7 +105,7 @@ export default {
   'sub.balance': 'ยอดคงเหลือ',
   'sub.free': 'ยังไม่ได้จัดสรร',
   'sub.ofMoved': 'เหลือจากที่โอนมา {moved}',
-  'sub.sharedHint': '(ใช้ร่วมกัน)',
+  'sub.sharedHint': '(ยอดหลักส่วนที่ยังไม่จัดสรร ใช้ร่วมกัน)',
   'sub.used7': 'เครดิตค่าโทร 7 วันล่าสุด',
   'sub.limit': 'เพดานใช้จ่ายรายวัน',
   'sub.accountLimit': 'ตามเพดานบัญชี',

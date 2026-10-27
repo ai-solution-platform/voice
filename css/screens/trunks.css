@@ -97,3 +97,4 @@ html[data-motion="reduce"] .tk-bar { animation: none; }
   .tk-tbl .tk-rowact { flex-direction: row; justify-content: flex-start; }
   .tk-tbl tr.tk-row-down { box-shadow: inset 3px 0 0 var(--red); }
 }
+.tk-block { display: block; }

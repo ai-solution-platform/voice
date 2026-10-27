@@ -55,6 +55,7 @@
 .lg-reason-no-answer, .lg-reason-busy { border-color: var(--amber-200); background: var(--amber-50); }
 .lg-reason-no-answer h3, .lg-reason-busy h3 { color: var(--amber-700); }
 .lg-reason-canceled { background: var(--sunken); }
+.lg-block { display: block; }
 .lg-code { display: inline-block; padding: 1px 6px; border-radius: 5px; background: #fff; border: 1px solid var(--border); font-size: var(--fs-xs); font-weight: 600; }
 .lg-next { padding: 8px 10px; border-radius: var(--r-sm); background: rgba(255,255,255,.7); }
 .lg-inc { align-items: center; flex-wrap: wrap; }

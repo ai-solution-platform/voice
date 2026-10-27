@@ -105,7 +105,7 @@ export default {
   'sub.balance': 'Balance',
   'sub.free': 'not allocated',
   'sub.ofMoved': 'left of {moved} moved',
-  'sub.sharedHint': '(shared)',
+  'sub.sharedHint': '(the unallocated main balance, shared)',
   'sub.used7': 'Call credits, last 7 days',
   'sub.limit': 'Daily spending limit',
   'sub.accountLimit': 'Account limit',

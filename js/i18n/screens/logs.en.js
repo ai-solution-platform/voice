@@ -311,4 +311,9 @@ export default {
   'reason.staffTransfer': 'Answered · pressed {key} → talked to your staff',
   'reason.repeatPressed': 'Answered · pressed {key} to hear the message again',
   'dt': '{date}, {time}',
+  'cost.planMin': { one: '{n} min from your plan minutes · 0 credits', other: '{n} min from your plan minutes · 0 credits' },
+  'cost.planOver': '+ beyond your plan minutes {n} min × {rate} = {total} credits',
+  'cost.wizardTest': 'Test call from the SIP wizard · not charged · 0 credits',
+  'reason.identityConfirmed': 'Answered · pressed 1 (confirmed it is them · reminder played)',
+  'reason.quoteSent': 'Answered · pressed 1 (renewal quote sent by SMS)',
 };

@@ -25,9 +25,26 @@ export function newId(prefix) {
  */
 export const balance = () => {
   const p = store.get('billing.profile');
-  if (p && p.mode === 'postpaid') return Math.max(0, Math.round(((p.creditLimit || 0) - (p.usedThisMonth || 0)) * 100) / 100);
+  if (p && p.mode === 'postpaid') return postpaidHeadroom(p).left;
   return store.get('credits.balance') || 0;
 };
+
+/**
+ * Postpaid: what can still be spent this month — the lower of what is left of the credit limit (the cap: credit
+ * limit − billed so far) and what is left of the customer's own monthly safety limit (limit − credits used this
+ * month; plan minutes and the fixed plan charge are not credits used). → { left, creditLeft, safetyLeft, by }:
+ * `by` = 'safety' when the safety limit is the lower one, else 'credit'.
+ */
+export function postpaidHeadroom(p = store.get('billing.profile')) {
+  const r = (x) => Math.max(0, Math.round(x * 100) / 100);
+  const creditLeft = r((p.creditLimit || 0) - (p.usedThisMonth || 0));
+  const monthly = (store.get('limits') || {}).monthly;
+  const safetyLeft = monthly ? r(monthly - monthCredits()) : null;
+  const by = safetyLeft != null && safetyLeft < creditLeft ? 'safety' : 'credit';
+  return { left: by === 'safety' ? safetyLeft : creditLeft, creditLeft, safetyLeft, by };
+}
+/** Credits used this month (Billing › Used this month; on a plan the plan minutes are not in it). */
+const monthCredits = () => { const u = usageMonth(); return u ? u.total : sessionUsage(); };
 export const isActive = () => store.get('mode') === 'active';
 export const trialLeft = () => {
   const c = store.get('credits');
@@ -86,22 +103,22 @@ export function addCall(record) {
 /**
  * Charge live call records at the account's rates — the one rule for single calls (addCall) and campaign runs
  * (campaigns.js, a batch of attempts at a time). Each record comes priced at the listed prices (`credits`, with
- * its `billedMin`). On a plan, outbound minutes are re-priced at the plan rate and drawn from the plan minutes
- * first (drawPlanMinutes sets `credits` and `plan` on the record); nothing else touches the plan minutes.
- * Usage = the records' credits, the same in every billing mode (Used today / this month); the charge is what the
- * mode bills now: prepaid takes it from the credit balance, postpaid adds it to this month's invoice — on a plan
- * only the minutes beyond the plan minutes (overage, at the plan rate) and extras such as the premium voice.
- * Sandbox records are not charged (they use trial minutes). Returns { usage, charge, planMinutes } —
- * credits, credits, and the minutes taken from the plan minutes.
+ * its `billedMin`). On a plan, outbound minutes are drawn from the plan minutes first (drawPlanMinutes sets
+ * `planMin`, `plan` and the credits actually charged on the record); nothing else touches the plan minutes.
+ * ONE RULE for usage on every screen: credits are what is charged — prepaid from the credit balance, postpaid on
+ * this month's invoice; on a plan only the minutes beyond the plan minutes (overage, at the plan rate) and extras
+ * such as the premium voice. Plan minutes are their own unit and never count as credits (Used today / this month,
+ * the daily spending limit, Reports, campaign totals). Sandbox records are not charged (they use trial minutes).
+ * Returns { usage, charge, planMinutes } — usage = charge (credits), and the minutes taken from the plan minutes.
  */
 export function chargeCalls(recs) {
   const live = (recs || []).filter((r) => r && r.env === 'live');
   const onPlan = activePlan() ? live.filter((r) => r.billedMin && (r.kind || 'outbound') === 'outbound') : [];
   const drawn = onPlan.length ? drawPlanMinutes(onPlan) : { charge: 0, minutes: 0 };
   const charge = r2c(drawn.charge + live.filter((r) => !onPlan.includes(r)).reduce((a, r) => a + (r.credits || 0), 0));
-  const usage = r2c(live.reduce((a, r) => a + (r.credits || 0), 0));
-  if (charge || usage) spend(charge, { usage });
-  return { usage, charge, planMinutes: drawn.minutes };
+  if (charge) spend(charge);
+  if (drawn.minutes) store.update('billing.sessionPlanMin', (m) => (m || 0) + drawn.minutes);
+  return { usage: charge, charge, planMinutes: drawn.minutes };
 }
 
 /**
@@ -117,25 +134,31 @@ export function spend(amount, { usage = amount } = {}) {
   if (usage) store.update('billing.sessionUsed', (u) => Math.round(((u || 0) + usage) * 100) / 100);
 }
 
-/** Usage added by this demo session (calls, campaigns, number orders) on top of the sample day and month. */
+/** Credits charged in this demo session (calls, campaigns, number orders) on top of the sample day and month. */
 export const sessionUsage = () => store.get('billing.sessionUsed') || 0;
+/** Plan minutes drawn in this demo session (calls and campaigns on a plan). */
+export const sessionPlanMinutes = () => store.get('billing.sessionPlanMin') || 0;
 /**
- * Credits used today / this month, all channels: { total, voice, other } — one definition for every screen and
- * every billing mode (traffic at the account's rates; a plan prices outbound minutes at the plan rate). Postpaid
- * only changes how it is paid: the invoice so far is describeProfile().usedThisMonth. null when the dataset has no
- * sample usage (new account).
+ * Usage today / this month, all channels: { total, voice, other, planMin } — one definition for every screen and
+ * every billing mode. total / voice / other are CREDITS charged (what the daily and monthly limits count); on a
+ * plan the outbound minutes covered by the plan minutes are not credits: they are planMin, in minutes (sample day
+ * or cycle + this session). Postpaid only changes how it is paid: the invoice so far is
+ * describeProfile().usedThisMonth (= the plan charge + these credits). null when the dataset has no sample usage.
  */
 export function usageToday() {
   const u = store.get('billing.usedToday');
   if (!u) return null;
   const d = sessionUsage();
-  return { total: r2c(u.total + d), voice: r2c(u.voice + d), other: u.other };
+  const adj = activePlan() ? planAdjust() : null;
+  const planMin = activePlan() ? Math.round(((adj && adj.minToday) || 0) + sessionPlanMinutes()) : 0;
+  return { total: r2c(u.total + d), voice: r2c(u.voice + d), other: u.other, planMin };
 }
 export function usageMonth() {
   const u = store.get('billing.usedMonth');
   if (!u) return null;
   const d = sessionUsage();
-  return { total: r2c(u.total + d), voice: r2c(u.voice + d), other: u.other };
+  const pm = planMinutesBalance();
+  return { total: r2c(u.total + d), voice: r2c(u.voice + d), other: u.other, planMin: pm ? Math.max(0, pm.included - pm.minutes) : 0 };
 }
 const r2c = (x) => Math.round(x * 100) / 100;
 
@@ -219,13 +242,16 @@ function drawPlanMinutes(recs) {
   let inside = 0;
   let charge = 0;
   for (const rec of recs) {
+    // The call at the plan rate, then the part the plan minutes cover comes off: what is left is charged in credits.
     const diff = r2c(rec.billedMin * (PRICES.outbound - plan.rate));
-    rec.credits = Math.max(0, r2c(rec.credits - diff));
-    rec.plan = plan.id;
+    const atPlanRate = Math.max(0, r2c(rec.credits - diff));
     const ins = Math.max(0, Math.min(used + rec.billedMin, included) - used);
     used += rec.billedMin;
     inside += ins;
-    charge += Math.max(0, r2c(rec.credits - ins * plan.rate));
+    rec.plan = plan.id;
+    rec.planMin = ins;                                            // minutes from the plan minutes (their own unit)
+    rec.credits = Math.max(0, r2c(atPlanRate - ins * plan.rate)); // credits charged: overage + extras
+    charge += rec.credits;
   }
   const next = { ...plan, ...planUsage(plan, used) };
   // Prepaid: remember the plan minutes drawn in this session, so leaving the plan (Demo panel) charges them to credits.
@@ -280,13 +306,6 @@ export const numberFeesMonth = () => numberFees(store.get('numbers') || [], curr
 const seededNumberFees = () => ((store.get('billing.usage') || []).find((u) => u.item === 'numbers') || {}).credits || 0;
 /** Number fees charged in this demo session (orders placed since the page loaded), on top of the sample month. */
 export const sessionNumberFees = () => Math.max(0, Math.round((numberFeesMonth().credits - seededNumberFees()) * 100) / 100);
-
-const monthUsed = () => Math.round(((store.get('billing.usedMonth.total') || 0) + sessionNumberFees()) * 100) / 100;
-/** This month's usage other than outbound minutes (OTP, inbound, recording, numbers, trunks, other channels). */
-const monthOtherUsage = () => {
-  const out = ((store.get('billing.usage') || []).find((u) => u.item === 'outbound') || {}).credits || 0;
-  return Math.max(0, Math.round((monthUsed() - out) * 100) / 100);
-};
 
 /** Money totals of an invoice from its lines (credits → THB at the account's credit rate, VAT 7 %). */
 function invoiceTotals(lines) {
@@ -365,9 +384,15 @@ export function postpaidInvoices(profile = billingProfile()) {
  * A plan starts on the 1st of this month (cycle day 1) with this month's outbound minutes already counted.
  */
 export function setBillingPreset(preset, { planId = 'plan50k' } = {}) {
-  // Leaving a plan: take back what switching it on changed (repriced usage; prepaid also the credits the plan minutes saved and the plan invoice).
+  // Leaving a plan: take back what switching it on changed (the plan minutes taken out of the credit figures;
+  // prepaid also the balance and the plan invoice). Plan minutes drawn in this session become credits at the plan rate.
+  const prev = activePlan();
   const prevAdj = planAdjust();
   if (prevAdj) shiftPlan(prevAdj, -1);
+  if (prev && sessionPlanMinutes()) {
+    store.update('billing.sessionUsed', (u) => r2c((u || 0) + sessionPlanMinutes() * prev.rate));
+    store.set('billing.sessionPlanMin', 0);
+  }
   const postpaid = preset.startsWith('postpaid');
   const withPlan = preset.endsWith('-plan');
   const plan = withPlan ? makePlan(planId, { cycleStartDay: 1, usedMinutes: monthMinutes(), unusedPolicy: 'expire', startedAt: '2026-10-01' }) : null;
@@ -376,55 +401,73 @@ export function setBillingPreset(preset, { planId = 'plan50k' } = {}) {
     mode: postpaid ? 'postpaid' : 'prepaid',
     creditLimit: postpaid ? (isActive() ? 150000 : 20000) : null,
     paymentTermsDays: postpaid ? 30 : null,
-    // Postpaid "used this month" on the profile = what the invoice says so far ("Billed so far"). On a plan: the
-    // monthly commitment (a fixed line) + overage at the plan rate + all other usage; without a plan: all usage.
-    usedThisMonth: postpaid ? (plan ? Math.round((plan.monthlyCharge + plan.overageCredits + monthOtherUsage()) * 100) / 100 : monthUsed()) : null,
+    usedThisMonth: null,
     plan,
   };
-  profile.invoices = postpaid ? sampleInvoices(profile) : [];
   if (plan) {
-    // One rule in both modes: on a plan, this cycle's outbound minutes are priced at the plan rate in every usage
-    // figure (Used today / this month, usage table, charts, Reports, Overview). Prepaid: the plan charge is paid on
-    // an invoice and buys the plan minutes, a separate balance (planMinutesBalance) — so the minutes already used
-    // inside the plan this cycle no longer come out of the credit balance; postpaid has the plan charge as an
-    // invoice line instead (openLines), so its balance and invoice do not move here.
+    // One rule in every mode: on a plan, this cycle's outbound minutes inside the plan come from the plan minutes,
+    // a separate balance in minutes, so they leave every CREDIT figure (Used today / this month, usage table,
+    // charts, Reports, Overview, the daily limit) and show as plan minutes instead. Prepaid: the plan charge is paid
+    // on its own invoice and buys the plan minutes, so those minutes no longer come out of the credit balance;
+    // postpaid has the plan charge as a fixed invoice line instead (openLines).
     plan.adj = planAdjustment(plan, { prepaid: !postpaid });
     shiftPlan(plan.adj, 1);
   }
+  // Postpaid "Billed so far" = what the invoice says: the fixed plan charge (on a plan) + the credits used this
+  // month (Used this month) — so the invoice lines always add up to plan charge + Used this month.
+  if (postpaid) profile.usedThisMonth = r2c((plan ? plan.monthlyCharge : 0) + monthCredits());
+  profile.invoices = postpaid ? sampleInvoices(profile) : [];
   store.set('billing.profile', profile);
   audit('billing.mode-changed', { mode: profile.mode, plan: plan ? plan.id : null });
   return profile;
 }
 
-/** What switching a plan on changes in the sample month (credits per day at list price − at the plan rate). */
+/**
+ * What switching a plan on changes in the sample month. Outbound minutes inside the plan come from the plan
+ * minutes, so each day's credits lose their full listed price (`days`, and the minutes in `daysMin`); minutes beyond
+ * the plan stay credits, re-priced at the plan rate.
+ */
 function planAdjustment(plan, { prepaid }) {
   const r2 = (x) => Math.round(x * 100) / 100;
   const diff = PRICES.outbound - plan.rate;
+  const included = plan.committedMinutes + (plan.carriedMinutes || 0);
   const start = plan.startedAt || iso().slice(0, 8) + '01';
   const series = store.get('series') || [];
   const days = {};
-  for (const d of series) if (d.date >= start && d.outMin) days[d.date] = r2(d.outMin * diff);
-  const sumDays = (list) => r2(list.reduce((a, d) => a + (days[d.date] || 0), 0));
+  const daysMin = {};
+  let cum = 0;
+  for (const d of series) {
+    if (d.date < start || !d.outMin) continue;
+    const ins = Math.max(0, Math.min(cum + d.outMin, included) - cum);
+    cum += d.outMin;
+    days[d.date] = r2(ins * PRICES.outbound + (d.outMin - ins) * diff);
+    if (ins) daysMin[d.date] = ins;
+  }
+  const sumDays = (list, map = days) => r2(list.reduce((a, d) => a + (map[d.date] || 0), 0));
   const todayKey = iso().slice(0, 10);
   const rep7 = sumDays(series.slice(-7));
-  // Reports › credits by sub-account (last 7 days): the cut is shared by outbound minutes, to the cent.
+  const rep7Min = Math.round(sumDays(series.slice(-7), daysMin));
+  // Reports › credits by sub-account (last 7 days): the cut is shared by the sub-accounts that make outbound calls,
+  // in proportion to their credits (to the cent), and so are the plan minutes (to the minute).
   const subs = ((store.get('reports') || {}).bySub || []);
-  const mins = subs.map((x) => x.billedMin || 0);
-  const totalMin = mins.reduce((a, m) => a + m, 0) || 1;
-  const bySub = mins.map((m) => r2((rep7 * m) / totalMin));
-  const last = bySub.map((v, i) => (v ? i : -1)).filter((i) => i >= 0).pop();
-  if (last != null && last >= 0) bySub[last] = r2(bySub[last] + rep7 - bySub.reduce((a, v) => a + v, 0));
+  const w = subs.map((x) => (x.billedMin != null ? x.credits || 0 : 0));
+  const W = w.reduce((a, v) => a + v, 0) || 1;
+  const share = (total, round) => {
+    const parts = w.map((v) => round((total * v) / W));
+    const last = parts.map((v, i) => (w[i] ? i : -1)).filter((i) => i >= 0).pop();
+    if (last != null && last >= 0) parts[last] = round(parts[last] + total - parts.reduce((a, v) => a + v, 0));
+    return parts;
+  };
   const net = creditsToThb(plan.monthlyCharge, creditRate());
-  // Prepaid: the minutes inside the plan were charged to credits at list price in the sample month; with the plan
-  // they come out of the plan minutes instead, so the credit balance gets their cost back (reprice + inside × rate).
-  const inside = Math.min(monthMinutes(), plan.committedMinutes + (plan.carriedMinutes || 0));
+  const inside = Math.min(monthMinutes(), included);
+  const cut = r2(inside * PRICES.outbound + (monthMinutes() - inside) * diff);
   return {
     prepaid,
     planCredits: prepaid ? plan.monthlyCharge : 0,
-    insideCredits: prepaid ? r2(inside * plan.rate) : 0,
-    minutes: monthMinutes(), date: plan.startedAt,
-    reprice: r2(monthMinutes() * diff), repriceToday: days[todayKey] || 0,
-    days, rep7, prev7: sumDays(series.slice(-14, -7)), bySub, avg7: r2(rep7 / 7),
+    minutes: monthMinutes(), inside, date: plan.startedAt, rate: plan.rate,
+    // cut: credits that leave the month (prepaid: they come back to the balance) · cutToday / minToday: today's part
+    cut, cutToday: days[todayKey] || 0, minToday: daysMin[todayKey] || 0,
+    days, daysMin, rep7, rep7Min, prev7: sumDays(series.slice(-14, -7)), bySub: share(rep7, r2), bySubMin: share(rep7Min, Math.round), avg7: r2(rep7 / 7),
     invoice: prepaid ? { id: 'INV-2610-0100', kind: 'plan', date: plan.startedAt || iso().slice(0, 10), period: (plan.startedAt || iso()).slice(0, 7), credits: plan.monthlyCharge, plan: plan.id, minutes: plan.committedMinutes, rate: plan.rate, net, vat: Math.round(net * 7) / 100, total: Math.round(net * 107) / 100 } : null,
   };
 }
@@ -436,36 +479,72 @@ function planAdjust(profile = billingProfile()) {
   if (p.adj) return p.adj;
   return p.prepaidAdj ? { ...p.prepaidAdj, prepaid: true } : null;
 }
-/** Prepaid + plan (demo): what switching the plan on added to this month — { planCredits, insideCredits, reprice, repriceToday, minutes, invoice } or null. */
+/** Prepaid + plan (demo): what switching the plan on added to this month — { planCredits, cut, cutToday, minutes, inside, invoice } or null. */
 export function prepaidPlanAdjust(profile = billingProfile()) {
   const adj = planAdjust(profile);
   return profile.mode === 'prepaid' && adj && adj.prepaid ? adj : null;
 }
+/** Plan minutes on each sample day (series[].planMin, set while a plan is on): sum over a list of days. */
+export const planMinutesIn = (days) => Math.round((days || []).reduce((a, d) => a + (d.planMin || 0), 0));
 /** Apply (sign 1) or take back (sign −1) a plan's effect on this month's usage figures (and, prepaid, the balance and invoices). */
 function shiftPlan(adj, sign) {
   const r2 = (x) => Math.round(x * 100) / 100;
   // Prepaid: the plan minutes are a separate balance, so the credit balance only moves by what the plan takes off
   // credits (the minutes inside it, at list price). Leaving the plan also charges the plan minutes drawn since.
-  if (adj.prepaid) store.update('credits.balance', (b) => Math.max(0, r2((b || 0) + sign * (adj.reprice + (adj.insideCredits || 0)) - (sign < 0 ? adj.drawn || 0 : 0))));
+  if (adj.prepaid) store.update('credits.balance', (b) => Math.max(0, r2((b || 0) + sign * adj.cut - (sign < 0 ? adj.drawn || 0 : 0))));
   const um = store.get('billing.usedMonth');
-  if (um) store.set('billing.usedMonth', { ...um, total: r2(um.total - sign * adj.reprice), voice: r2(um.voice - sign * adj.reprice) });
+  if (um) store.set('billing.usedMonth', { ...um, total: r2(um.total - sign * adj.cut), voice: r2(um.voice - sign * adj.cut) });
   const ut = store.get('billing.usedToday');
-  if (ut) store.set('billing.usedToday', { ...ut, total: r2(ut.total - sign * adj.repriceToday), voice: r2(ut.voice - sign * adj.repriceToday) });
+  if (ut) store.set('billing.usedToday', { ...ut, total: r2(ut.total - sign * adj.cutToday), voice: r2(ut.voice - sign * adj.cutToday) });
   const us = store.get('billing.usage');
-  if (us) store.set('billing.usage', us.map((u) => (u.item === 'outbound' ? { ...u, credits: r2(u.credits - sign * adj.reprice) } : u)));
+  if (us) store.set('billing.usage', us.map((u) => (u.item === 'outbound' ? { ...u, credits: r2(u.credits - sign * adj.cut), planMin: sign > 0 ? adj.inside : undefined } : u)));
   const avg = store.get('billing.avgPerDay7');
   if (avg && adj.avg7 != null) store.set('billing.avgPerDay7', r2(avg - sign * adj.avg7));
   if (adj.days) {
     const days = adj.days;
+    const mins = adj.daysMin || {};
     const series = store.get('series');
-    if (series) store.set('series', series.map((d) => (days[d.date] ? { ...d, credits: r2(d.credits - sign * days[d.date]) } : d)));
+    if (series) store.set('series', series.map((d) => (days[d.date] ? { ...d, credits: r2(d.credits - sign * days[d.date]), planMin: sign > 0 ? mins[d.date] || 0 : undefined } : d)));
     const td = store.get('today');
-    if (td && td.creditsUsedVoice != null) store.set('today', { ...td, creditsUsedVoice: r2(td.creditsUsedVoice - sign * adj.repriceToday), monthVoice: r2(td.monthVoice - sign * adj.reprice), monthAll: r2(td.monthAll - sign * adj.reprice) });
+    if (td && td.creditsUsedVoice != null) store.set('today', { ...td, creditsUsedVoice: r2(td.creditsUsedVoice - sign * adj.cutToday), monthVoice: r2(td.monthVoice - sign * adj.cut), monthAll: r2(td.monthAll - sign * adj.cut) });
     const rep = store.get('reports');
     if (rep && rep.credits != null) {
       store.set('reports', { ...rep, credits: r2(rep.credits - sign * adj.rep7), prev7Credits: rep.prev7Credits != null ? r2(rep.prev7Credits - sign * adj.prev7) : rep.prev7Credits,
-        bySub: (rep.bySub || []).map((x, i) => ({ ...x, credits: r2(x.credits - sign * ((adj.bySub || [])[i] || 0)) })) });
+        bySub: (rep.bySub || []).map((x, i) => ({ ...x, credits: r2(x.credits - sign * ((adj.bySub || [])[i] || 0)), planMin: sign > 0 ? (adj.bySubMin || [])[i] || 0 : undefined })) });
     }
+  }
+  // The sample records of this cycle (Logs rows, campaign totals) follow the same rule as the totals: outbound
+  // minutes inside the plan show as plan minutes, not credits. Leaving the plan restores the sample records; calls
+  // made on the plan in this session turn their plan minutes into credits at the plan rate (as the balance does).
+  const start = adj.date || iso().slice(0, 8) + '01';
+  const rate = adj.rate || PRICES.outbound;
+  const toPlan = (rec, min) => ({ ...rec, _pre: { credits: rec.credits }, planMin: min, credits: Math.max(0, r2(rec.credits - min * PRICES.outbound)) });
+  const back = (rec) => {
+    const { _pre, planMin, plan, ...rest } = rec;
+    void plan;
+    return _pre ? { ...rest, credits: _pre.credits } : { ...rest, credits: r2((rec.credits || 0) + (planMin || 0) * rate) };
+  };
+  const calls = store.get('calls');
+  if (calls) {
+    store.set('calls', calls.map((c) => {
+      if (sign < 0) return c.planMin != null || c._pre ? back(c) : c;
+      const ok = c.env === 'live' && (c.kind || 'outbound') === 'outbound' && c.direction === 'outbound' && c.billedMin > 0 && c.planMin == null && String(c.ts || '') >= start;
+      return ok ? toPlan(c, c.billedMin) : c;
+    }));
+  }
+  const camps = store.get('campaigns');
+  if (camps) {
+    store.set('campaigns', camps.map((c) => {
+      if (sign < 0) {
+        if (c._pre) { const { _pre, planMin, ...rest } = c; void planMin; return { ...rest, credits: _pre.credits }; }
+        if (c.planMin != null) { const { planMin, ...rest } = c; return { ...rest, credits: r2((c.credits || 0) + (planMin || 0) * rate), charged: r2((c.charged || 0) + (planMin || 0) * rate) }; }
+        return c;
+      }
+      // Sample campaigns carry their billed minutes, or credits at the listed price only (minutes = credits ÷ price).
+      const min = c.billedMin > 0 ? c.billedMin : c.credits ? Math.round(c.credits / PRICES.outbound) : 0;
+      const ok = min > 0 && c.planMin == null && ['running', 'paused', 'completed'].includes(c.status) && String(c.startedAt || '') >= start;
+      return ok ? { ...c, _pre: { credits: c.credits }, planMin: min, credits: Math.max(0, r2((c.credits || 0) - min * PRICES.outbound)) } : c;
+    }));
   }
   if (adj.invoice) {
     store.update('billing.invoices', (l) => {
@@ -483,11 +562,17 @@ export function describeProfile(profile = billingProfile()) {
   const plan = profile.plan;
   const postpaid = profile.mode === 'postpaid';
   const used = postpaid ? profile.usedThisMonth || 0 : null;
+  const room = postpaid ? postpaidHeadroom(profile) : null;
   return {
     mode: profile.mode,
     modeKey: `bm.mode.${profile.mode}${plan ? 'Plan' : ''}`,   // bm.mode.prepaid | prepaidPlan | postpaid | postpaidPlan
     balance: postpaid ? null : store.get('credits.balance') || 0,
+    // What can still be spent: prepaid the balance; postpaid the lower of credit left and safety limit left (room.by).
     available: balance(),
+    creditLeft: room ? room.creditLeft : null,
+    safetyLeft: room ? room.safetyLeft : null,
+    limitBy: room ? room.by : null,
+    monthlyLimit: (store.get('limits') || {}).monthly || null,
     creditLimit: postpaid ? profile.creditLimit : null,
     usedThisMonth: used,
     pctOfLimit: postpaid && profile.creditLimit ? Math.min(100, Math.round((used / profile.creditLimit) * 100)) : null,

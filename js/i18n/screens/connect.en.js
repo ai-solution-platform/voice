@@ -16,7 +16,7 @@ export default {
   // card B
   'b.title': 'SIP trunk',
   'b.sub': 'For your own PBX (FreePBX, 3CX, Asterisk, Yeastar). About 10 minutes if your firewall is ready.',
-  'b.price': 'Trunk {trunk} credits a month · {included} calls at the same time included · +{extra} per extra call · no setup fee',
+  'b.price': 'Trunk {trunk} credits a month · {included} calls at the same time included · each extra one {extra} a month · no setup fee',
   'b.create': 'Create trunk',
   'b.guides': 'PBX setup guides',
 
@@ -84,7 +84,7 @@ export default {
   'api.evSig': 'How to verify the signature',
   'api.evCopy': 'Copy payload',
   'prices.title': 'Prices',
-  'prices.line': 'Outbound {out}/min · inbound {inb}/min · OTP {otp} per answered call · numbers {number}/month · one price for SIP and API. Calls are billed per started minute from answer. OTP and notification calls up to 1 minute are one price per answered call. Unanswered calls are free.',
+  'prices.line': 'Outbound {out}/min · inbound {inb}/min · OTP {otp} per answered call · numbers {number}/month. Same prices for SIP and API. Billed per started minute; unanswered calls are free.',
   'prices.plans': 'Volume plans from {min} min a month (12 months) · partner and wholesale: contact sales',
   'prices.all': 'See all prices',
 
@@ -258,4 +258,8 @@ export default {
   'wz.5.ready': 'All checks passed. You can activate the trunk.',
   'wz.5.allPassed': 'All checks passed. You can activate the trunk.',
   'wz.5.optionsPassed': 'OPTIONS passed. Run a test call to finish.',
+  'wz.5.readyInFail': 'The inbound test failed: no audio. Fix the firewall and retry. You can still activate the trunk for outbound calls.',
+  'wz.5.inFail': 'The inbound test failed: no audio. Fix the firewall and retry, or run the outbound test.',
+  'wz.5.readyNoIn': 'OPTIONS and the outbound test passed. You can activate now; the inbound test has not run yet.',
+  'wz.5.readyNoOut': 'OPTIONS and the inbound test passed. You can activate now; the outbound test has not run yet.',
 };

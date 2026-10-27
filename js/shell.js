@@ -12,7 +12,7 @@ import { fmt } from './core/format.js';
 import { store } from './core/store.js';
 import { persist, KEYS } from './core/persist.js';
 import { go, getScreens, currentScreen } from './core/router.js';
-import { balance, trialLeft, stepsDone, markAllRead, markRead, setEnv, setMode, isActive, describeProfile, setBillingPreset, billingProfile } from './core/actions.js';
+import { balance, trialLeft, stepsDone, markAllRead, markRead, setEnv, setMode, isActive, describeProfile, setBillingPreset, billingProfile, activePlan } from './core/actions.js';
 import { PRICES } from './data/prices.js';
 import { TEST_WORKSPACE_NAME } from './data/active.js';
 import { ui } from './ui/index.js';
@@ -28,10 +28,22 @@ let hooks = {};
 let collapsed = new Set(persist.get(KEYS.navCollapsed, []));
 let shownBalance = null;
 
-/** Days of credit left at the 7-day average spend (active) — null when unknown. */
+/**
+ * Days of credit left at the 7-day average spend (active) — null when unknown. On a plan the plan minutes are not
+ * credits: the pace is the credits a day now and, once the plan minutes run out (at the 7-day outbound pace), the
+ * outbound minutes too, at the plan rate.
+ */
 export function runwayDays() {
   const avg = store.get('billing.avgPerDay7');
-  return isActive() && avg ? balance() / avg : null;
+  if (!isActive() || !avg) return null;
+  const plan = activePlan();
+  if (!plan) return balance() / avg;
+  const week = (store.get('series') || []).slice(-7);
+  const minPerDay = week.reduce((a, d) => a + (d.outMin || 0), 0) / Math.max(1, week.length);
+  const planDays = minPerDay ? Math.max(0, plan.leftMinutes || 0) / minPerDay : Infinity;
+  const b = balance();
+  if (b <= avg * planDays) return b / avg;
+  return planDays + (b - avg * planDays) / (avg + minPerDay * plan.rate);
 }
 
 const openAlerts = () => (store.get('alertHistory') || []).filter((a) => a.status === 'open').length;

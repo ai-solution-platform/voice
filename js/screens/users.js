@@ -46,6 +46,8 @@ function accessLabel(ctx, access) {
 function allocated(ctx) { return r2(subs(ctx).reduce((s, x) => s + (x.ownAllocation && x.status !== 'closed' ? x.ownAllocation.left : 0), 0)); }
 function freeMain(ctx) { return r2(balance() - allocated(ctx)); }
 function used7(ctx, subId) { const row = ((ctx.store.get('reports') || {}).bySub || []).find((x) => x.sub === subId); return row ? row.credits : 0; }
+/** Plan minutes a sub-account used in the last 7 days (on a plan; Reports › credits by sub-account). */
+function planMin7(ctx, subId) { const row = ((ctx.store.get('reports') || {}).bySub || []).find((x) => x.sub === subId); return row ? row.planMin || 0 : 0; }
 
 function busy(btn, ms = 600) {
   return new Promise((resolve) => {
@@ -135,8 +137,8 @@ function subsPanel(ctx) {
     return h`<article class="card us-sub ${suspended ? 'is-susp' : ''} ${ctx.state.fresh === s.id ? 'us-fresh' : ''}" aria-labelledby="us-s-${s.id}">
       <div class="us-sub-head"><h3 id="us-s-${s.id}">${ctx.loc(s.name)}</h3>${s.main ? h`<span class="chip chip-navy">${t('sub.main')}</span>` : suspended ? h`<span class="chip chip-err">${t('sub.suspended')}</span>` : h`<span class="chip chip-ok">${t('sub.active')}</span>`}</div>
       <div class="us-kv"><span>${t('sub.credits')}</span><strong>${s.main ? t('sub.mainBalance') : own ? t('sub.own') : t('sub.shared')}</strong></div>
-      <div class="us-kv"><span>${t('sub.balance')}</span><strong class="tnum">${s.main ? h`${fmt.credits2(freeMain(ctx))} <span class="hint-xs">${t('sub.free')}</span>` : own ? h`${fmt.credits2(s.ownAllocation.left)} <span class="hint-xs">${t('sub.ofMoved', { moved: fmt.int(s.ownAllocation.moved) })}</span>` : h`${fmt.credits2(balance())} <span class="hint-xs">${t('sub.sharedHint')}</span>`}</strong></div>
-      <div class="us-kv"><span>${t('sub.used7')}</span><strong class="tnum">${fmt.credits2(used7(ctx, s.id))}</strong></div>
+      <div class="us-kv"><span>${t('sub.balance')}</span><strong class="tnum">${s.main ? h`${fmt.credits2(freeMain(ctx))} <span class="hint-xs">${t('sub.free')}</span>` : own ? h`${fmt.credits2(s.ownAllocation.left)} <span class="hint-xs">${t('sub.ofMoved', { moved: fmt.int(s.ownAllocation.moved) })}</span>` : h`${fmt.credits2(freeMain(ctx))} <span class="hint-xs">${t('sub.sharedHint')}</span>`}</strong></div>
+      <div class="us-kv"><span>${t('sub.used7')}</span><strong class="tnum">${planMin7(ctx, s.id) ? ctx.ui.describe.used(used7(ctx, s.id), planMin7(ctx, s.id)) : fmt.credits2(used7(ctx, s.id))}</strong></div>
       <div class="us-kv"><span>${t('sub.limit')}</span><strong class="tnum">${s.dailyLimit ? fmt.int(s.dailyLimit) : t('sub.accountLimit')}</strong></div>
       <div class="us-kv"><span>${t('sub.numbersKeys')}</span><strong class="tnum">${nums} · ${keys}</strong></div>
       <div class="us-kv"><span>${t('sub.owner')}</span><strong>${s.owner || '—'}</strong></div>

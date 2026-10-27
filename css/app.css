@@ -745,7 +745,11 @@ html.rail .demo-btn { justify-content: center; padding: 8px; width: 48px; margin
   .backdrop { padding: 8px; align-items: flex-end; }
   .drawer-backdrop { padding: 0; }
   .modal { max-height: 92vh; }
-  .toasts { left: 12px; right: 12px; width: auto; top: 108px; bottom: auto; } /* top of the screen, but below the two-row top bar so it never covers bell, language or credits */
+  /* One toast at a time (toast.js), at the bottom above the Demo pill: it never covers the page header. While a
+     bottom sheet, drawer or the full-screen dialer is open it moves to the top, clear of their buttons. */
+  .toasts { left: 12px; right: 12px; width: auto; top: auto; bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
+  html.has-modal .toasts, html.has-modal.has-drawer body .toasts, body.has-dialer .toasts { top: 12px; bottom: auto; left: 12px; right: 12px; width: auto; transform: none; }
+  body:has(.st-dirty) .toasts { bottom: calc(112px + env(safe-area-inset-bottom, 0px)); }
   .toast { pointer-events: none; } /* taps reach the page beneath; a plain confirmation closes on the next tap (toast.js) */
   .toast .ta, .toast.has-action .tx, .toast.toast-error .tx { pointer-events: auto; }
   .toast:not(.has-action):not(.toast-error) .tx { display: none; }

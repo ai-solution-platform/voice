@@ -62,7 +62,7 @@ export default {
   'tile.trial': '试用分钟',
   'tile.creditsLine': '按当前用量约可用 {days} 天',
   'tile.creditsOwn': '该子账户自有点数 · 已转入 {moved}',
-  'tile.creditLeft': '本月剩余额度',
+  'tile.creditLeft': '本月还可使用',
   'tile.creditLeftLine': '已计费 {used} / {limit} · 按月出账',
   'tile.creditsPlan': '套餐 {min} 分钟 · 已用 {used}',
   'tile.creditsLive': '所有渠道共用一个余额',
@@ -153,4 +153,8 @@ export default {
   'alert.logs': '查看记录',
   'alert.rules': '告警规则',
   'alert.ack': '确认',
+  'tile.leftSafety': '安全上限 {limit} 先到 · 信用额度 {cap}',
+  'tile.usedLinePlan': '今日{plan} · 本月：语音 {voice} · 全部渠道 {all}',
+  'tile.usedRangePlan': '{plan} · 语音通话、号码和中继',
+  'spend.linePlan': '语音 {voice} · 其他渠道 {other} · 不计套餐分钟（{plan}）',
 };

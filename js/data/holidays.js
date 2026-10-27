@@ -55,3 +55,5 @@ export const ymdOf = (ms) => new Date(ms + 7 * 3600000).toISOString().slice(0, 1
 export const holidaysFrom = (ymd) => HOLIDAYS.filter((x) => x.date >= ymd);
 /** First and last day the list covers (callers say so when a date falls outside it). */
 export const HOLIDAY_RANGE = { from: '2026-01-01', to: '2027-12-31' };
+/** The years the list covers, for "27 from today · 44 in 2026–2027" (Thai shows the Buddhist years). */
+export const holidayYears = (lang) => { const off = lang === 'th' ? 543 : 0; return `${Number(HOLIDAY_RANGE.from.slice(0, 4)) + off}–${Number(HOLIDAY_RANGE.to.slice(0, 4)) + off}`; };

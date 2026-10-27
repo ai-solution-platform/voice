@@ -230,3 +230,6 @@ html[lang="th"] .cp-pre-text, html[lang="th"] .cp-preset-rules ul { line-height:
 @media (max-width: 767px) {
   .cp-preset { padding: var(--s-3); }
 }
+
+/* "Next" while the list is being read: still clickable — the click is kept and runs when reading ends */
+.btn.is-waiting .spin { width: 14px; height: 14px; border-color: rgba(255,255,255,.4); border-top-color: #fff; }

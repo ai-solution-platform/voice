@@ -5,7 +5,7 @@
 // Every price comes from js/data/prices.js; every total from the store (js/data/active.js) so Overview = Billing = Reports.
 
 import { html as h, raw, on, reducedMotion } from '../core/dom.js';
-import { isActive, balance, addSalesRequest, describeProfile, isPostpaid, postpaidInvoices, creditRate, prepaidPlanAdjust, planMinutesBalance, numberFeesMonth, sessionNumberFees, planAlerts, setPlanAlert, PLAN_ALERT_LEVELS, sessionUsage, usageToday, usageMonth } from '../core/actions.js';
+import { isActive, balance, addSalesRequest, describeProfile, isPostpaid, postpaidInvoices, creditRate, prepaidPlanAdjust, planMinutesBalance, numberFeesMonth, sessionNumberFees, planAlerts, setPlanAlert, PLAN_ALERT_LEVELS, sessionUsage, sessionPlanMinutes, usageToday, usageMonth } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES, comparePlans, paygCost, firstTopUpOfferActive } from '../data/prices.js';
 
@@ -50,7 +50,9 @@ function statements(ctx) {
   const planCredits = adj ? adj.planCredits : 0;
   const pm = adj ? planMinutesBalance() : null;
   const planLeft = pm ? pm.credits : 0;
-  const split = () => ({ credits: balance(), planLeft, planMin: pm ? pm.minutes : 0, closing: r2(balance() + planLeft) });
+  // …and "used" is two parts as well: the credits charged (= Used this month) and the plan minutes used (at the plan rate).
+  const planUsedMin = pm ? Math.max(0, pm.included - pm.minutes) : 0;
+  const split = () => ({ credits: balance(), planLeft, planMin: pm ? pm.minutes : 0, closing: r2(balance() + planLeft), planUsedMin, planUsedValue: pm ? r2(planUsedMin * pm.rate) : 0 });
   if (!list.length) {
     if (!demoInv.length && !adj) return [];
     const sp = split();
@@ -93,13 +95,13 @@ function usedToday(ctx) {
   const u = usageToday();
   if (u) return u;
   const used = (statements(ctx)[0] || {}).used || 0;
-  return { total: used, voice: used, other: 0 };
+  return { total: used, voice: used, other: 0, planMin: 0 };
 }
 function usedMonth(ctx) {
   const u = usageMonth();
   if (u) return u;
   const used = (statements(ctx)[0] || {}).used || 0;
-  return { total: used, voice: used, other: 0 };
+  return { total: used, voice: used, other: 0, planMin: 0 };
 }
 /** Outbound minutes in the last 30 days: the one figure the plan banner, the calculator and a plan request use. */
 function last30(ctx) {
@@ -136,7 +138,7 @@ function profile() {
   }
   return {
     mode: d.mode, creditLimit: d.creditLimit || 0, termsDays: d.paymentTermsDays || 30, used: d.usedThisMonth || 0, pct: d.pctOfLimit || 0,
-    available: d.available, openInvoice: d.openInvoice, plan,
+    available: d.available, openInvoice: d.openInvoice, plan, limitBy: d.limitBy, monthlyLimit: d.monthlyLimit, creditLeft: d.creditLeft,
   };
 }
 const postpaid = () => isPostpaid();
@@ -212,6 +214,8 @@ function tiles(ctx) {
   const autoOn = auto && typeof auto === 'object' && auto.on;
   const pct = lim.daily ? Math.round((today.total / lim.daily) * 100) : 0;
   const pf = profile();
+  const onPlan = !!pf.plan;
+  const plus = (n) => ctx.ui.describe.plusPlanMin(n);
   const pm = prepaidPlanMinutes(ctx);
   const credLine = sandbox
     ? t('tile.creditsTrial', { left: fmt.num(Math.max(0, (ctx.store.get('credits.trialTotal') || 0) - (ctx.store.get('credits.trialUsed') || 0)), 1), total: fmt.int(PRICES.trial.minutes) })
@@ -219,11 +223,11 @@ function tiles(ctx) {
     : avg && isActive() ? t('tile.creditsRunway', { days: fmt.int(Math.floor(balance() / avg)) }) : t('tile.creditsLine');
   return h`<div class="grid g-5 bl-tiles">
     ${pf.mode === 'postpaid'
-      ? h`<div class="card tile"><span class="t">${t('tile.available')}</span><span class="v">${fmt.credits2(pf.available)}</span><span class="h">${t('tile.availableLine', { used: fmt.credits2(pf.used), limit: fmt.int(pf.creditLimit) })}</span></div>`
+      ? h`<div class="card tile" data-bl="left"><span class="t">${t('tile.available')}</span><span class="v">${fmt.credits2(pf.available)}</span><span class="h">${pf.limitBy === 'safety' ? t('tile.availableSafety', { limit: fmt.int(pf.monthlyLimit), cap: fmt.int(pf.creditLimit) }) : t('tile.availableCredit', { cap: fmt.int(pf.creditLimit), used: fmt.credits2(pf.used) })}</span></div>`
       : h`<div class="card tile"><span class="t">${ctx.term(t('tile.credits'), 'credits')}</span><span class="v">${fmt.credits2(balance())}</span><span class="h">${credLine}</span></div>`}
-    <a class="card tile tile-link" href="#/reports?range=today" data-action="bl.tile.today"><span class="t">${t('tile.today')}</span><span class="v">${fmt.credits2(today.total)}</span><span class="h">${t('tile.todayLine', { voice: fmt.credits2(today.voice), other: fmt.credits2(today.other) })}</span></a>
-    <button type="button" class="card tile tile-link bl-tilebtn" data-action="bl.tile.month"><span class="t">${t('tile.month')}</span><span class="v">${fmt.credits2(month.total)}</span><span class="h">${t('tile.monthLine', { voice: fmt.credits2(month.voice), other: fmt.credits2(month.other) })}${lim.monthly ? h` · ${t('tile.ofMonthly', { pct: Math.round((month.total / lim.monthly) * 100), limit: fmt.int(lim.monthly) })}` : ''}</span></button>
-    <button type="button" class="card tile tile-link bl-tilebtn" data-action="bl.tile.limit"><span class="t">${t('tile.limit')}</span><span class="v">${fmt.int(lim.daily || 0)}</span><span class="h">${t('tile.limitLine', { pct })}</span></button>
+    <a class="card tile tile-link" href="#/reports?range=today" data-action="bl.tile.today"><span class="t">${t('tile.today')}</span><span class="v">${fmt.credits2(today.total)}</span><span class="h">${onPlan ? t('tile.todayLinePlan', { plan: plus(today.planMin), voice: fmt.credits2(today.voice), other: fmt.credits2(today.other) }) : t('tile.todayLine', { voice: fmt.credits2(today.voice), other: fmt.credits2(today.other) })}</span></a>
+    <button type="button" class="card tile tile-link bl-tilebtn" data-action="bl.tile.month"><span class="t">${t('tile.month')}</span><span class="v">${fmt.credits2(month.total)}</span><span class="h">${onPlan ? t('tile.monthLinePlan', { plan: plus(month.planMin), voice: fmt.credits2(month.voice), other: fmt.credits2(month.other) }) : t('tile.monthLine', { voice: fmt.credits2(month.voice), other: fmt.credits2(month.other) })}${lim.monthly ? h` · ${t('tile.ofMonthly', { pct: Math.round((month.total / lim.monthly) * 100), limit: fmt.int(lim.monthly) })}` : ''}</span></button>
+    <button type="button" class="card tile tile-link bl-tilebtn" data-action="bl.tile.limit"><span class="t">${t('tile.limit')}</span><span class="v">${fmt.int(lim.daily || 0)}</span><span class="h">${t(onPlan ? 'tile.limitLinePlan' : 'tile.limitLine', { pct })}</span></button>
     ${pf.mode === 'postpaid' ? h`<button type="button" class="card tile tile-link bl-tilebtn" data-action="bl.goinvoices"><span class="t">${t('tile.terms')}</span><span class="v">${t('mode.termsDays', { count: pf.termsDays })}</span><span class="h">${pf.openInvoice && pf.openInvoice.issuedAt ? t('tile.termsLine', { date: fmt.dayMonth(pf.openInvoice.issuedAt) }) : t('tile.termsLineNone')}</span></button>` : h`<button type="button" class="card tile tile-link bl-tilebtn" data-action="bl.tile.auto" data-inv="bl.auto"><span class="t">${t('tile.auto')}</span><span class="v">${autoOn ? t('auto.on') : t('auto.off')}</span><span class="h">${autoOn ? t('tile.autoLine', { below: fmt.int(auto.below), add: fmt.int(auto.add) }) : t('tile.autoOff')}</span>
       <span class="toggle bl-toggle-ro" aria-hidden="true" ${raw(autoOn ? 'data-on="true"' : '')}></span></button>`}
   </div>`;
@@ -237,7 +241,14 @@ function chartCard(ctx) {
       <div class="empty empty-center"><span class="art">${ctx.icon('chart')}</span><strong>${t('chart.empty')}</strong><span class="hint">${t('chart.emptyHint')}</span>
       <a class="btn btn-sm btn-navy" href="#/test-call" data-action="bl.chart.empty">${ctx.icon('phone')}${t('chart.emptyBtn')}</a></div></div>`;
   }
-  const rows = series.map((d) => ({ date: d.date, voice: d.credits, other: OTHER_PER_DAY[d.date] || 0 }));
+  // Today also counts what this demo session charged and drew, so "Today so far" = Used today.
+  const todayKey = new Date(nowMs() + 7 * 3600000).toISOString().slice(0, 10);
+  const onPlan = !!profile().plan;
+  const rows = series.map((d) => {
+    const isToday = d.date === todayKey && isActive();
+    return { date: d.date, voice: r2(d.credits + (isToday ? sessionUsage() : 0)), other: OTHER_PER_DAY[d.date] || 0, planMin: (d.planMin || 0) + (isToday ? sessionPlanMinutes() : 0) };
+  });
+  const tip = (r) => (onPlan ? t('chart.tipPlan', { day: fmt.dayMonth(r.date), voice: fmt.credits2(r.voice), other: fmt.int(r.other), plan: ctx.ui.describe.plusPlanMin(r.planMin) }) : t('chart.tip', { day: fmt.dayMonth(r.date), voice: fmt.credits2(r.voice), other: fmt.int(r.other) }));
   const max = Math.max(...rows.map((r) => r.voice + r.other));
   const scale = max * 1.08;
   const total = rows.reduce((s, r) => s + r.voice + r.other, 0);
@@ -246,12 +257,12 @@ function chartCard(ctx) {
     <div class="card-body"><div class="bl-bars" role="img" aria-label="${t('chart.aria', { from: fmt.dayMonth(rows[0].date), to: fmt.dayMonth(rows[rows.length - 1].date), total: fmt.int(total) })}">
       ${rows.map((r, i) => {
         const last = i === rows.length - 1;
-        return h`<span class="bl-bar ${last ? 'is-last' : ''}" tabindex="0" data-tip="${t('chart.tip', { day: fmt.dayMonth(r.date), voice: fmt.credits2(r.voice), other: fmt.int(r.other) })}" aria-label="${t('chart.tip', { day: fmt.dayMonth(r.date), voice: fmt.credits2(r.voice), other: fmt.int(r.other) })}">
+        return h`<span class="bl-bar ${last ? 'is-last' : ''}" tabindex="0" data-tip="${tip(r)}" aria-label="${tip(r)}">
           <span class="bl-stack" style="height:${((r.voice + r.other) / scale * 100).toFixed(1)}%"><i class="o" style="flex:${r.other}"></i><i class="v" style="flex:${r.voice.toFixed(0)}"></i></span>
           <span class="bl-day"><b>${Number(r.date.slice(8))}</b><span class="wd">${weekdayLabel(ctx, r.date, false)}</span><span class="wdn" aria-hidden="true">${weekdayLabel(ctx, r.date, true)}</span></span></span>`;
       })}</div>
       ${chartSummary(ctx, rows)}
-      <p class="hint-xs bl-chart-note">${t('chart.note')}</p></div></div>`;
+      <p class="hint-xs bl-chart-note">${onPlan ? h`${t('chart.notePlan')} ` : ''}${t('chart.note')}</p></div></div>`;
 }
 
 /** Three figures under the chart: the 7-day average (the same pace the top bar uses), the highest day, today so far. */
@@ -273,7 +284,7 @@ function usageCard(ctx) {
   const { t, fmt, icon } = ctx;
   const usage = usageRows(ctx);
   const d = demoCalls(ctx);
-  if (!usage.length && !d) {
+  if (!usage.length && !d && !sessionPlanMinutes()) {
     return h`<section class="card bl-usage" id="bl-usage" aria-labelledby="bl-usage-h"><div class="card-head"><h2 id="bl-usage-h">${t('usage.title')}</h2></div>
       <div class="empty"><span class="art">${icon('list')}</span><strong>${t('usage.empty')}</strong><span class="hint">${t('usage.emptyHint')}</span>
       <a class="btn btn-sm" href="#/help/article/billing-credits" data-action="bl.usage.learn">${icon('book')}${t('usage.learn')}</a></div></section>`;
@@ -284,15 +295,16 @@ function usageCard(ctx) {
   const total = r2(voiceSum + others.reduce((s, u) => s + u.credits, 0));
   const row = (u) => h`<tr class="bl-click" data-action="bl.usage.row" data-value="${u.product}" tabindex="0">
       <td><span class="strong">${t(`usage.item.${u.item}`)}</span>${u.product === 'voice' ? h` <span class="hint-xs">· ${t('usage.voice')}</span>` : ''}${u.fees && u.fees.first ? h`<span class="hint-xs bl-block">${t('up.numbersSub', { full: fmt.int(u.fees.full), first: fmt.int(u.fees.first) })}</span>` : ''}</td>
-      <td class="num mono">${u.product === 'voice' ? h`${fmt.int(u.quantity)} ${t(`usage.unit.${u.unit}`, { count: u.quantity })}` : h`<span class="hint-xs" title="${t('usage.otherQty')}">—</span>`}</td><td class="num mono">${fmt.credits2(u.credits)}</td></tr>`;
+      <td class="num mono">${u.product === 'voice' ? h`${fmt.int(u.quantity)} ${t(`usage.unit.${u.unit}`, { count: u.quantity })}${u.planMin ? h`<span class="hint-xs bl-block">${t('usage.planQty')}</span>` : ''}` : h`<span class="hint-xs" title="${t('usage.otherQty')}">—</span>`}</td><td class="num mono">${fmt.credits2(u.credits)}</td></tr>`;
+  const sessMin = sessionPlanMinutes();
   return h`<section class="card bl-usage" id="bl-usage" aria-labelledby="bl-usage-h"><div class="card-head"><h2 id="bl-usage-h">${t('usage.title')}</h2><span class="hint">${t('usage.range', { to: fmt.dayMonth(nowMs()) })}</span></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('usage.product')}</th><th class="num">${t('usage.qty')}</th><th class="num">${t('usage.credits')}</th></tr></thead>
     <tbody>${voice.map(row)}
-      ${d ? h`<tr class="bl-click" data-action="bl.usage.row" data-value="voice" tabindex="0"><td><span class="strong">${t('usage.item.demo')}</span> <span class="chip chip-navy">${t('common.demoTag')}</span></td><td class="num mono">—</td><td class="num mono">${fmt.credits2(d)}</td></tr>` : ''}
+      ${d || sessMin ? h`<tr class="bl-click" data-action="bl.usage.row" data-value="voice" tabindex="0"><td><span class="strong">${t('usage.item.demo')}</span> <span class="chip chip-navy">${t('common.demoTag')}</span></td><td class="num mono">${sessMin ? h`<span class="hint-xs">${ctx.ui.describe.plusPlanMin(sessMin)}</span>` : '—'}</td><td class="num mono">${fmt.credits2(d)}</td></tr>` : ''}
       <tr class="bl-sub"><td>${t('usage.voiceSub')}</td><td></td><td class="num mono">${fmt.credits2(voiceSum)}</td></tr>
       ${others.map(row)}
       <tr class="bl-total"><td>${t('usage.total')}</td><td></td><td class="num mono">${fmt.credits2(total)}</td></tr></tbody></table></div>
-    <div class="card-foot hint-xs">${t('usage.foot')}${profile().plan ? h`<br>${t('usage.planNote', { rate: fmt.rate(profile().plan.rate) })}` : ''}</div></section>`;
+    <div class="card-foot hint-xs">${profile().plan ? h`<span class="strong" data-bl="planline">${t('usage.planLine', { n: fmt.int(usedMonth(ctx).planMin || 0), min: fmt.int(profile().plan.committed + (profile().plan.carried || 0)) })}</span><br>${t('usage.planNote', { rate: fmt.rate(profile().plan.rate) })}<br>` : ''}${t('usage.foot')}</div></section>`;
 }
 
 function rateCard(ctx) {
@@ -356,7 +368,7 @@ function limitsCard(ctx) {
         <span class="hint-xs">${t('limits.dailyHint', { channels: chans })}</span></div>
       <div class="stack" style="gap:6px"><div class="row" style="justify-content:space-between"><strong>${t('limits.monthly')}</strong><span class="mono">${lim.monthly ? h`${fmt.credits2(month.total)} / ${fmt.int(lim.monthly)}` : t('limits.none')}</span></div>${lim.monthly ? bar(month.total, lim.monthly) : ''}
         <span class="hint-xs">${postpaid() ? t('limits.monthlyHintPostpaid', { limit: fmt.int(profile().creditLimit) }) : t('limits.monthlyHint')}</span></div>
-      <div class="note note-info">${icon('shield')}<span>${t('limits.blocks')}</span></div>
+      <div class="note note-info">${icon('shield')}<span>${t('limits.blocks')}${profile().plan ? h` ${t('limits.planNote')}` : ''}</span></div>
       </div><div class="stack-3"><div class="bl-kv"><span class="k">${t('limits.dest')}</span><span class="v stack" style="gap:6px;align-items:flex-end">
         <span class="row-tight"><span class="chip chip-ok">${icon('check')}${t('limits.destThai')}</span></span>
         <span class="row-tight"><span class="chip chip-err" tabindex="0" data-inv="bl.dest.premium" data-tip-key="billing.limits.premiumTip">${icon('x-circle')}${t('limits.destPremium')}</span></span>
@@ -404,6 +416,7 @@ function modeCard(ctx) {
       <div class="bl-fact"><span class="k">${t('mode.used')}</span><span class="v">${fmt.credits2(used)} <span class="hint-xs">(${pct}%)</span></span>
         <span class="progress ${pct >= 80 ? 'bl-prog-warn' : 'bl-prog'}" role="progressbar" aria-label="${t('mode.used')}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></span>
         ${pf.plan ? h`<span class="hint-xs">${t('mode.usedPlanLine', { charge: fmt.credits2(pf.plan.monthlyCharge) })}</span>` : ''}</div>
+      ${fact(t('mode.left'), fmt.credits2(pf.available), pf.limitBy === 'safety' ? t('mode.leftSafety', { limit: fmt.int(pf.monthlyLimit), used: fmt.credits2(usedMonth(ctx).total) }) : t('mode.leftCredit'))}
       ${fact(t('mode.terms'), t('mode.termsDays', { count: pf.termsDays }), inv && inv.issuedAt ? t('mode.termsLine', { date: fmt.dateProse(inv.issuedAt), due: inv.dueAt ? fmt.dateProse(inv.dueAt) : '—' }) : '')}`;
   } else {
     const auto = ctx.store.get('billing.autoTopUp');
@@ -425,7 +438,7 @@ function modeCard(ctx) {
   return h`<section class="card bl-mode" id="bl-mode" aria-labelledby="bl-mode-h"><div class="card-head"><h2 id="bl-mode-h">${t('mode.title')}</h2>
       <span class="chip ${pf.mode === 'postpaid' ? 'chip-navy' : 'chip-ok'}">${t(`mode.${pf.mode}`)}${pf.plan ? ` + ${t('mode.withPlan', { min: fmt.int(pf.plan.committed) })}` : ''}</span></div>
     <div class="card-body stack-3"><p class="hint bl-mode-what">${t(pf.mode === 'prepaid' && prepaidPlanMinutes(ctx) ? 'mode.prepaidPlanWhat' : `mode.${pf.mode}What`)}</p>
-      <div class="bl-facts ${pf.mode === 'prepaid' && prepaidPlanMinutes(ctx) ? 'is-split' : ''}">${facts}</div>
+      <div class="bl-facts ${pf.mode === 'prepaid' && prepaidPlanMinutes(ctx) ? 'is-split' : pf.mode === 'postpaid' ? 'is-four' : ''}">${facts}</div>
       <div class="row">${pf.mode === 'prepaid' ? h`<button type="button" class="btn btn-sm btn-primary" data-action="bl.topup">${icon('plus')}${t('topup')}</button>` : ''}
         ${req ? h`<span class="chip chip-warn">${icon('clock')}${t('mode.requested', { ref: req.ref })}</span>`
           : h`<button type="button" class="btn btn-sm" data-action="bl.mode.request" data-value="${other}">${icon('send')}${t('mode.request', { to: t(`mode.${other}`) })}</button>`}
@@ -595,12 +608,19 @@ function upcomingCard(ctx) {
       <span class="hint-xs bl-block bl-m-only">${[lineQty(ctx, l), lineRate(ctx, l)].filter((v) => v && v !== '—').join(' · ')}</span></td>
     <td class="num tnum nowrap bl-d-only">${lineQty(ctx, l) || '—'}</td><td class="num tnum bl-d-only">${lineRate(ctx, l)}</td><td class="num mono">${fmt.credits2(l.credits)}</td></tr>`;
   const foot = (label, value, key, cls = '') => h`<tr class="${cls}"><td>${label}</td><td class="bl-d-only"></td><td class="bl-d-only"></td><td class="num mono" data-up="${key}">${value}</td></tr>`;
+  // The subtotal says what it is made of, and claims "= Used this month" only when that is the same figure:
+  // with a plan, the fixed plan charge + the credits used this month; without one, the credits used this month.
+  const usedNow = (usageMonth() || {}).total;
+  const planCharge = x.plan || 0;
+  const usagePart = r2(x.amount - planCharge);
+  const same = usedNow != null && Math.abs(usagePart - usedNow) < 0.005;
+  const subLabel = !same ? t('up.subtotalPlain') : x.plan != null ? t('up.subtotalPlan', { plan: fmt.credits2(planCharge), used: fmt.credits2(usagePart) }) : t('up.subtotal');
   return h`<section class="card bl-up" id="bl-upcoming" aria-labelledby="bl-up-h"><div class="card-head"><h2 id="bl-up-h">${t('up.title', { date: fmt.dayMonth(x.issued) })}</h2>
       <span class="chip chip-info" tabindex="0" data-tip="${t('up.draftTip')}">${t('up.draft')}</span>
       <span class="hint">${t('up.sub', { month: monthLabel(ctx, x.period), due: fmt.dateProse(x.due) })}</span></div>
     ${x.lines.length ? h`<div class="tbl-wrap" data-pin="none"><table class="tbl bl-up-tbl"><thead><tr><th>${t('up.item')}</th><th class="num bl-d-only">${t('up.qty')}</th><th class="num bl-d-only">${t('up.rate')}</th><th class="num">${t('up.amount')}</th></tr></thead>
       <tbody>${x.lines.map(line)}
-        ${foot(t('up.subtotal'), fmt.credits2(x.amount), 'subtotal', 'bl-sub')}
+        ${foot(subLabel, fmt.credits2(x.amount), 'subtotal', 'bl-sub')}
         ${foot(t('up.vat'), fmt.credits2(x.vat), 'vat')}
         ${foot(t('up.total'), fmt.credits2(x.total), 'total', 'bl-total')}</tbody></table></div>`
     : h`<div class="empty"><span class="art">${icon('file-text')}</span><strong>${t('up.empty')}</strong></div>`}
@@ -634,7 +654,8 @@ function statementsCard(ctx) {
   // Prepaid + plan: the closing is two balances — credits and the unused plan minutes (at the plan rate).
   const cur = list.find((s) => s.status === 'current');
   const pm = adj ? planMinutesBalance() : null;
-  const splitFoot = cur && pm ? h`<br><span data-stmt="splitfoot">${t('stmt.footSplit', { closing: fmt.credits2(cur.closing), credits: fmt.credits2(cur.credits), n: fmt.int(pm.minutes), plan: fmt.credits2(cur.planLeft), rate: fmt.rate(pm.rate), date: tableDate(ctx, pm.expires) })}</span>` : '';
+  const splitFoot = cur && pm ? h`<br><span data-stmt="usedfoot">${t('stmt.usedPlanLine', { used: fmt.credits2(cur.used), credits: fmt.credits2(r2(cur.used - cur.planUsedValue)), n: fmt.int(cur.planUsedMin), rate: fmt.rate(pm.rate), value: fmt.credits2(cur.planUsedValue) })}</span>
+    <br><span data-stmt="splitfoot">${t('stmt.footSplit', { closing: fmt.credits2(cur.closing), credits: fmt.credits2(cur.credits), n: fmt.int(pm.minutes), plan: fmt.credits2(cur.planLeft), rate: fmt.rate(pm.rate), date: tableDate(ctx, pm.expires) })}</span>` : '';
   return h`<section class="card bl-stmt" id="bl-statements" aria-labelledby="bl-stmt-h"><div class="card-head"><h2 id="bl-stmt-h">${t('stmt.title')}</h2>
       <div class="seg seg-sm" role="group" aria-label="${t('stmt.title')}">${['all', 'voice'].map((s) => h`<button type="button" data-action="bl.stmt.seg" data-value="${s}" aria-pressed="${ctx.state.stmt === s}">${t(`stmt.seg.${s}`)}</button>`)}</div></div>
     ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('stmt.period')}</th><th>${t('stmt.status')}</th><th class="num">${t('stmt.opening')}</th><th class="num">${t('stmt.topups')}</th><th class="num">${t('stmt.bonus')}</th>${withPlan ? h`<th class="num">${t('stmt.planCredits')}</th>` : ''}<th class="num">${voiceOnly ? t('stmt.usedVoice') : t('stmt.used')}</th><th class="num">${t('stmt.closing')}</th></tr></thead>
@@ -642,8 +663,8 @@ function statementsCard(ctx) {
           <span class="row-tight bl-files"><button type="button" class="linkbtn hint-xs" data-action="bl.stmt.csv" data-value="${s.period}">${icon('download', 'ico-xs')}${t('stmt.csv')}</button><button type="button" class="linkbtn hint-xs" data-action="bl.stmt.pdf" data-value="${s.period}">${icon('file-text', 'ico-xs')}${t('stmt.pdf')}</button></span></td>
         <td>${s.status === 'current' ? h`<span class="chip chip-warn">${t('stmt.current')}</span>` : h`<span class="chip">${t('stmt.closed')}</span>`}</td>
         <td class="num mono">${fmt.credits2(s.opening)}</td><td class="num mono">${fmt.credits2(s.topUps)}</td><td class="num mono">${s.bonus ? `+${fmt.credits2(s.bonus)}` : '0.00'}</td>${withPlan ? h`<td class="num mono">${s.planCredits ? `+${fmt.credits2(s.planCredits)}` : '0.00'}</td>` : ''}
-        <td class="num mono">${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}</td><td class="num mono strong">${fmt.credits2(s.closing)}${s.status === 'current' && s.planCredits ? h`<span class="hint-xs bl-block bl-d-only bl-closing-split" data-stmt="split"><span class="bl-block">${t('stmt.splitCredits', { credits: fmt.credits2(s.credits) })}</span><span class="bl-block">${t('stmt.splitPlan', { plan: fmt.credits2(s.planLeft) })}</span></span>` : ''}</td></tr>`)}</tbody></table></div>
-      <div class="card-foot hint-xs">${voiceOnly ? t('stmt.footVoice') : withPlan ? t('stmt.footWithPlan') : t('stmt.foot')}${adj ? h`<br>${t('stmt.footPlan', { min: fmt.int(profile().plan.committed), id: adj.invoice.id, date: tableDate(ctx, adj.invoice.date), minutes: fmt.int(profile().plan.used), rate: fmt.rate(profile().plan.rate) })}
+        <td class="num mono">${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}${s.status === 'current' && s.planCredits ? h`<span class="hint-xs bl-block bl-d-only bl-closing-split" data-stmt="usedsplit"><span class="bl-block">${t('stmt.usedSplitCredits', { credits: fmt.credits2(r2((voiceOnly ? s.usedVoice : s.used) - s.planUsedValue)) })}</span><span class="bl-block">${t('stmt.usedSplitPlan', { n: fmt.int(s.planUsedMin) })}</span><span class="bl-block">${t('stmt.usedSplitValue', { value: fmt.credits2(s.planUsedValue) })}</span></span>` : ''}</td><td class="num mono strong">${fmt.credits2(s.closing)}${s.status === 'current' && s.planCredits ? h`<span class="hint-xs bl-block bl-d-only bl-closing-split" data-stmt="split"><span class="bl-block">${t('stmt.splitCredits', { credits: fmt.credits2(s.credits) })}</span><span class="bl-block">${t('stmt.splitPlan', { plan: fmt.credits2(s.planLeft) })}</span></span>` : ''}</td></tr>`)}</tbody></table></div>
+      <div class="card-foot hint-xs">${voiceOnly ? t('stmt.footVoice') : withPlan ? t('stmt.footWithPlan') : t('stmt.foot')}${adj ? h`<br>${t('stmt.footPlan', { min: fmt.int(profile().plan.committed + (profile().plan.carried || 0)), id: adj.invoice.id, date: tableDate(ctx, adj.invoice.date) })}
         ${splitFoot}
         <button type="button" class="linkbtn hint-xs" data-action="bl.stmt.planinv" data-value="${adj.invoice.id}">${t('stmt.openPlanInv', { id: adj.invoice.id })}</button>` : ''}</div>`
     : h`<div class="empty"><span class="art">${icon('file-text')}</span><strong>${t('stmt.empty')}</strong><span class="hint">${t('stmt.emptyHint')}</span></div>`}
@@ -847,11 +868,12 @@ function statementHtml(ctx, period, opts) {
   const voiceOnly = ctx.state.stmt === 'voice';
   const pm = s.status === 'current' && s.planCredits ? planMinutesBalance() : null;
   const splitLines = pm ? [[t('stmt.closingCredits'), '', fmt.credits2(s.credits)], [t('stmt.closingPlan', { date: fmt.dateProse(pm.expires) }), `${fmt.int(pm.minutes)} ${t('usage.unit.min')}`, fmt.credits2(s.planLeft)]] : [];
+  const usedSplit = pm ? [[`· ${t('common.credits')}`, '', fmt.credits2(r2((voiceOnly ? s.usedVoice : s.used) - s.planUsedValue))], [`· ${t('mode.planMin.title')}`, `${fmt.int(s.planUsedMin)} ${t('usage.unit.min')}`, fmt.credits2(s.planUsedValue)]] : [];
   printable(ctx, {
     title: t('print.stmtTitle', { month: monthLabel(ctx, period) }),
     filename: `ants-statement-${period}-sample.html`,
     meta: [[t('stmt.period'), monthLabel(ctx, period)], [t('stmt.status'), s.status === 'current' ? t('stmt.current') : t('stmt.closed')], [t('print.scope'), t(`stmt.seg.${voiceOnly ? 'voice' : 'all'}`)]],
-    lines: [[t('stmt.opening'), '', fmt.credits2(s.opening)], [t('stmt.topups'), '', fmt.credits2(s.topUps)], [t('stmt.bonus'), '', fmt.credits2(s.bonus)], ...(s.planCredits ? [[t('stmt.planCredits'), '', fmt.credits2(s.planCredits)]] : []), [voiceOnly ? t('stmt.usedVoice') : t('stmt.used'), '', `−${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}`],
+    lines: [[t('stmt.opening'), '', fmt.credits2(s.opening)], [t('stmt.topups'), '', fmt.credits2(s.topUps)], [t('stmt.bonus'), '', fmt.credits2(s.bonus)], ...(s.planCredits ? [[t('stmt.planCredits'), '', fmt.credits2(s.planCredits)]] : []), [voiceOnly ? t('stmt.usedVoice') : t('stmt.used'), '', `−${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}`], ...usedSplit,
       // The current month itemises "used" with the same rows as Billing › Usage (number fees live from Numbers).
       ...(s.status === 'current' ? usageRows(ctx).filter((u) => !voiceOnly || u.product === 'voice').map((u) => [`· ${t(`usage.item.${u.item}`)}`, u.product === 'voice' ? lineQty(ctx, { quantity: u.quantity, unit: u.unit }) : '', fmt.credits2(u.credits)])
         .concat(demoCalls(ctx) ? [[`· ${t('usage.item.demo')}`, '', fmt.credits2(demoCalls(ctx))]] : []) : []),

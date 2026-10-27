@@ -133,4 +133,8 @@ export default {
   'custom.bad': 'Pick a start date on or before the end date, inside the available data.',
   'custom.hint': 'Data is available from {from} to {to}.',
   'custom.apply': 'Apply',
+  'chart.costTipPlan': '{day} · {used}',
+  'chart.costNotePlan': 'On your plan, outbound minutes from the plan minutes cost no credits; they are shown as plan minutes.',
+  'subs.planMin': 'Plan min',
+  'subs.planFoot': 'Plan minutes are a separate balance, not credits.',
 };

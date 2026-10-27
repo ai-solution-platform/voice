@@ -12,7 +12,7 @@ import { audit, isActive } from '../core/actions.js';
 import { tIn, LANGS } from '../core/i18n.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES } from '../data/prices.js';
-import { holidaysFrom, ymdOf, HOLIDAY_RANGE } from '../data/holidays.js';
+import { holidaysFrom, ymdOf, HOLIDAY_RANGE, HOLIDAYS, holidayYears } from '../data/holidays.js';
 
 export const id = 'settings';
 export const nav = { group: 'account', icon: 'settings', labelKey: 'nav.settings' };
@@ -181,7 +181,7 @@ function complianceTab(ctx) {
       <div class="st-hours"><span class="strong">${t('hours.weekends')}</span><span class="row-tight">${sel('weFrom', c.weFrom, t('hours.fromAria', { days: t('hours.weekends') }))}<span aria-hidden="true">–</span>${sel('weTo', c.weTo, t('hours.toAria', { days: t('hours.weekends') }))}</span></div>
       ${c.wdFrom >= c.wdTo || c.weFrom >= c.weTo ? h`<span class="field-err">${t('hours.bad')}</span>` : ''}
       <div class="st-line"><div class="grow"><strong>${t('hours.holidays')}</strong><span class="hint-xs">${t('hours.holidaysHint')}</span>
-          ${c.holidays && next ? h`<span class="hint-xs">${t('hours.listLine', { n: fmt.int(upcoming.length), until: fmt.dateProse(`${HOLIDAY_RANGE.to}T12:00:00+07:00`), next: fmt.dateProse(`${next.date}T12:00:00+07:00`, true), name: ctx.loc(next.name) })}</span>` : ''}</div>
+          ${c.holidays && next ? h`<span class="hint-xs">${t('hours.listLine', { n: fmt.int(upcoming.length), all: fmt.int(HOLIDAYS.length), years: holidayYears(ctx.lang), until: fmt.dateProse(`${HOLIDAY_RANGE.to}T12:00:00+07:00`), next: fmt.dateProse(`${next.date}T12:00:00+07:00`, true), name: ctx.loc(next.name) })}</span>` : ''}</div>
         ${c.holidays ? h`<button type="button" class="btn btn-sm" data-action="st.hours.list">${icon('calendar')}${t('hours.listBtn')}</button>` : ''}${toggle(ctx, 'st.hours.holidays', c.holidays, t('hours.holidays'))}</div>
       <p class="hint-xs">${t('hours.note')}</p></div></section>
 

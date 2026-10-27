@@ -72,3 +72,4 @@
 /* "One balance for every channel" under Spent today */
 .ov-onebal { align-items: flex-start; gap: 6px; margin: 2px 0 0; padding-top: var(--s-2); border-top: 1px dashed var(--border); }
 .ov-onebal .ico { flex: none; margin-top: 2px; }
+.ov-block { display: block; }

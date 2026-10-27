@@ -4,7 +4,7 @@
 // spend, trunk health, recent calls). Every number comes from the store (js/data/active.js).
 
 import { raw, reducedMotion } from '../core/dom.js';
-import { stepsDone, isActive, trialLeft, balance, setStep, describeProfile, usageToday, usageMonth } from '../core/actions.js';
+import { stepsDone, isActive, trialLeft, balance, setStep, describeProfile, usageToday, usageMonth, activePlan, planMinutesIn } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES } from '../data/prices.js';
 
@@ -37,33 +37,36 @@ function shareFor(ctx, subId) {
   const by = (ctx.store.get('reports') || {}).bySub || [];
   const total = by.reduce((s, x) => s + x.calls, 0) || 1;
   const credits = by.reduce((s, x) => s + x.credits, 0) || 1;
+  const planMin = by.reduce((s, x) => s + (x.planMin || 0), 0) || 1;
   const row = by.find((x) => x.sub === subId);
-  return row ? { calls: row.calls / total, credits: row.credits / credits } : { calls: 1, credits: 1 };
+  return row ? { calls: row.calls / total, credits: row.credits / credits, planMin: (row.planMin || 0) / planMin } : { calls: 1, credits: 1, planMin: 1 };
 }
 
 /** KPI values for the active account in Live, per range and sub-account. */
 function activeStats(ctx) {
   const { range, sub } = ctx.state;
   const subId = SUB_KEYS[sub];
-  const sh = subId ? shareFor(ctx, subId) : { calls: 1, credits: 1 };
+  const sh = subId ? shareFor(ctx, subId) : { calls: 1, credits: 1, planMin: 1 };
   const series = ctx.store.get('series') || [];
   const today = ctx.store.get('today');
   const r = ctx.store.get('reports');
   let st;
   if (range === 'today') {
     // Voice credits today: the same figure as Billing › Used today › Voice (one usage rule in every billing mode).
-    st = { calls: today.calls, outbound: today.outbound, otp: today.otpNotif, inbound: today.inbound, answered: today.answered, used: (usageToday() || { voice: today.creditsUsedVoice }).voice, failed: today.failed, failed503: today.failed503 };
+    const u = usageToday() || { voice: today.creditsUsedVoice, planMin: 0 };
+    st = { calls: today.calls, outbound: today.outbound, otp: today.otpNotif, inbound: today.inbound, answered: today.answered, used: u.voice, planMin: u.planMin || 0, failed: today.failed, failed503: today.failed503 };
   } else {
     const days = range === '7d' ? series.slice(-7) : series;
     const sum = (k) => days.reduce((s, d) => s + d[k], 0);
     const calls = sum('calls');
     const failRate = (r.reasons.find((x) => x.key === 'notInService').calls + r.reasons.find((x) => x.key === 'networkUnavailable').calls) / r.calls;
     const f503 = r.reasons.find((x) => x.key === 'networkUnavailable').calls / r.calls;
-    st = { calls, outbound: sum('outCalls'), otp: sum('otpSent'), inbound: sum('inCalls'), answered: sum('answered'), used: Math.round(sum('credits') * 100) / 100, failed: Math.round(calls * failRate), failed503: Math.round(calls * f503) };
+    st = { calls, outbound: sum('outCalls'), otp: sum('otpSent'), inbound: sum('inCalls'), answered: sum('answered'), used: Math.round(sum('credits') * 100) / 100, planMin: planMinutesIn(days), failed: Math.round(calls * failRate), failed503: Math.round(calls * f503) };
   }
   if (subId) {
     for (const k of ['calls', 'outbound', 'otp', 'inbound', 'answered', 'failed', 'failed503']) st[k] = Math.round(st[k] * sh.calls);
     st.used = Math.round(st.used * sh.credits * 100) / 100;
+    st.planMin = Math.round(st.planMin * sh.planMin);
   }
   return st;
 }
@@ -168,8 +171,18 @@ function creditsTile(ctx, own, avg) {
   if (own) return tile(ctx, 'credits', fmt.floor(own.left), t('tile.creditsOwn', { moved: fmt.int(own.moved) }), '#/billing');
   const d = describeProfile();
   const planLine = d.plan ? t('tile.creditsPlan', { min: fmt.int(d.plan.committedMinutes), used: fmt.int(d.plan.usedMinutes) }) : null;
-  if (d.mode === 'postpaid') return tile(ctx, 'creditLeft', fmt.floor(d.available), planLine || t('tile.creditLeftLine', { used: fmt.int(d.usedThisMonth), limit: fmt.int(d.creditLimit) }), '#/billing');
+  if (d.mode === 'postpaid') return tile(ctx, 'creditLeft', fmt.floor(d.available), planLine || (d.limitBy === 'safety' ? t('tile.leftSafety', { limit: fmt.int(d.monthlyLimit), cap: fmt.int(d.creditLimit) }) : t('tile.creditLeftLine', { used: fmt.int(d.usedThisMonth), limit: fmt.int(d.creditLimit) })), '#/billing');
   return tile(ctx, 'credits', fmt.floor(balance()), planLine || t('tile.creditsLine', { days: fmt.int(Math.floor(balance() / avg)) }), '#/billing');
+}
+
+/** The line under "Voice credits used": on a plan the plan minutes come first, in minutes (never as credits). */
+function usedLine(ctx, st, range, today) {
+  const { t, fmt } = ctx;
+  const plan = !!activePlan();
+  const plus = ctx.ui.describe.plusPlanMin(st.planMin);
+  if (range !== 'today') return plan ? t('tile.usedRangePlan', { plan: plus }) : t('tile.usedRange');
+  const m = usageMonth() || { voice: today.monthVoice, total: today.monthAll };
+  return plan ? t('tile.usedLinePlan', { plan: plus, voice: fmt.int(m.voice), all: fmt.int(m.total) }) : t('tile.usedLine', { voice: fmt.int(m.voice), all: fmt.int(m.total) });
 }
 
 function tilesActive(ctx) {
@@ -185,7 +198,7 @@ function tilesActive(ctx) {
     ${creditsTile(ctx, own, avg)}
     ${tile(ctx, 'calls', fmt.int(st.calls), t('tile.callsLine', { out: fmt.int(st.outbound), otp: fmt.int(st.otp), inb: fmt.int(st.inbound) }), `#/logs?range=${range}`)}
     ${tile(ctx, 'answered', fmt.pct(range === 'today' && !subId ? today.answerRatePct : pctOf(st.answered, st.calls)), t('tile.answeredLine', { a: fmt.int(st.answered), b: fmt.int(st.calls) }), `#/reports?range=${range}`, 'answer_rate')}
-    ${tile(ctx, 'used', fmt.int(st.used), range === 'today' ? t('tile.usedLine', { voice: fmt.int((usageMonth() || { voice: today.monthVoice }).voice), all: fmt.int((usageMonth() || { total: today.monthAll }).total) }) : t('tile.usedRange'), '#/billing?section=usage', null, range === 'today' ? 'tile.usedToday' : null)}
+    ${tile(ctx, 'used', fmt.int(st.used), usedLine(ctx, st, range, today), '#/billing?section=usage', null, range === 'today' ? 'tile.usedToday' : null)}
     ${tile(ctx, 'failed', fmt.pct(range === 'today' && !subId ? today.failedPct : pctOf(st.failed, st.calls)), t('tile.failedLine', { n: fmt.int(st.failed), sip: fmt.int(st.failed503) }), `#/logs?status=failed&range=${range}`)}
   </div>`;
 }
@@ -302,7 +315,7 @@ function spendCard(ctx) {
   return h`<div class="card ov-spend"><div class="card-head"><h2>${t('spend.title')}</h2><button type="button" class="btn btn-sm" data-action="ov.spend.edit">${icon('edit')}${t('spend.edit')}</button></div>
     <div class="card-body stack"><div class="row" style="align-items:baseline;gap:6px"><span class="ov-big tnum">${fmt.int(used)}</span><span class="hint">/ ${fmt.int(lim.daily)}</span></div>
     <span class="progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${t('spend.title')}"><i style="width:${pct}%"></i></span>
-    <span class="hint-xs">${t('spend.line', { voice: fmt.int(today.voice), other: fmt.int(today.other) })}</span>
+    <span class="hint-xs">${activePlan() ? t('spend.linePlan', { voice: fmt.int(today.voice), other: fmt.int(today.other), plan: ctx.ui.describe.plusPlanMin(today.planMin) }) : t('spend.line', { voice: fmt.int(today.voice), other: fmt.int(today.other) })}</span>
     <span class="hint-xs">${t('spend.block')}</span>
     <p class="row-tight hint-xs ov-onebal" data-inv="ov.oneBalance">${icon('coin', 'ico-xs')}<span><strong>${t('spend.oneBalance')}</strong> · ${t('spend.oneBalanceLine')}</span></p></div></div>`;
 }
@@ -342,7 +355,7 @@ function recentCard(ctx) {
       <td class="clip" style="max-width:260px">${ctx.ui.describe.source(c)}</td>
       <td>${ctx.ui.describe.statusChip(c.status)}</td>
       <td class="num mono">${c.sec ? fmt.duration(c.sec) : '—'}</td>
-      <td class="num mono">${fmt.credits2(c.credits || 0)}</td></tr>`)}</tbody></table></div></div>`;
+      <td class="num mono">${fmt.credits2(c.credits || 0)}${c.planMin ? h`<span class="hint-xs ov-block">${ctx.ui.describe.plusPlanMin(c.planMin)}</span>` : ''}</td></tr>`)}</tbody></table></div></div>`;
 }
 
 function alertBanner(ctx) {

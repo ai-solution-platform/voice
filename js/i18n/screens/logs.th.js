@@ -310,4 +310,9 @@ export default {
   'reason.staffTransfer': 'รับสาย · กด {key} → คุยกับเจ้าหน้าที่ของคุณ',
   'reason.repeatPressed': 'รับสาย · กด {key} เพื่อฟังข้อความอีกครั้ง',
   'dt': '{date} เวลา {time} น.',
+  'cost.planMin': { other: 'หักจากนาทีแพ็กเกจ {n} นาที · 0 เครดิต' },
+  'cost.planOver': '+ ส่วนที่เกินนาทีแพ็กเกจ {n} นาที × {rate} = {total} เครดิต',
+  'cost.wizardTest': 'สายทดสอบจากตัวช่วยตั้งค่า SIP · ไม่คิดเงิน · 0 เครดิต',
+  'reason.identityConfirmed': 'รับสาย · กด 1 (ยืนยันว่าเป็นเจ้าตัว · เล่นข้อความแจ้งเตือนแล้ว)',
+  'reason.quoteSent': 'รับสาย · กด 1 (ส่งใบเสนอราคาทาง SMS แล้ว)',
 };
