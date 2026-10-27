@@ -1,0 +1,68 @@
+/* Settings — screen-owned styles (prefix st-). Loaded because js/screens/settings.js exports css = true. */
+
+.st { padding-bottom: 72px; }
+.st-tabs { align-self: flex-start; }
+.st-tabs button { padding: 7px 14px; font-size: var(--fs-sm); }
+.st-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-4); }
+.st-wh { align-items: center; flex-wrap: wrap; }
+.st-wh .grow { flex: 1 1 320px; }
+
+/* rows: text left, control right */
+.st-line { display: flex; align-items: center; gap: var(--s-4); padding: 6px 0; flex-wrap: wrap; }
+.st-line .grow { display: flex; flex-direction: column; gap: 2px; flex: 1 1 280px; }
+.st-narrow { width: auto; min-width: 200px; }
+.st-time { width: auto; min-width: 104px; }
+.st-hours { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; padding: 4px 0; }
+
+/* DNC */
+.st-dnc-check { flex-wrap: nowrap; }
+.st-dnc-check .input { min-width: 220px; }
+.st-dnc-result { margin: var(--s-3) var(--s-4) 0; }
+.st-dnc-tiles .tile { min-height: 100px; box-shadow: none; }
+.st-dnc-tiles .tile .v { font-size: var(--fs-xl); }
+.st-upload { border: 1.5px dashed var(--border-strong); background: #fff; align-items: center; justify-content: center; text-align: center; cursor: pointer; color: var(--text); font: inherit; gap: 6px; }
+.st-upload:hover { border-color: var(--orange); background: var(--orange-50); }
+.st-upload .ico { color: var(--navy); }
+.st-dnc-actions { margin-top: var(--s-3); }
+.st-filebtn { cursor: pointer; position: relative; }
+.st-filebtn:focus-within { outline: 2px solid var(--navy); outline-offset: 2px; }
+
+/* recording notice */
+.st-notice { border: 1px solid var(--border); border-radius: var(--r); padding: var(--s-3); display: flex; flex-direction: column; gap: 10px; background: var(--sunken); transition: opacity var(--dur) var(--ease-out); }
+.st-notice.is-off { opacity: .55; }
+.st-quote { margin: 0; padding: 10px 14px; border-left: 3px solid var(--orange); background: #fff; border-radius: 0 var(--r-sm) var(--r-sm) 0; font-size: var(--fs); line-height: 1.6; color: var(--text); }
+.st-loc { display: flex; gap: 10px; align-items: flex-start; margin: 0; font-size: var(--fs); }
+.st-loc .ico { color: var(--navy); margin-top: 3px; flex: none; }
+
+/* notifications matrix */
+.st-matrix .st-c { text-align: center; width: 90px; }
+.st-matrix td:first-child { min-width: 220px; }
+.st-evh { display: block; }
+.st-cb { width: 18px; height: 18px; accent-color: var(--orange); cursor: pointer; }
+.st-cb:disabled { cursor: not-allowed; opacity: .45; }
+.st-whrow { flex-wrap: nowrap; }
+.st-whrow .input { min-width: 0; }
+.st-line-modal { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: var(--s-4); align-items: start; }
+.st-line-modal > div { display: flex; flex-direction: column; gap: 6px; align-items: center; text-align: center; }
+.st-qr { width: 150px; height: 150px; border: 1px solid var(--border); border-radius: 10px; }
+
+/* sticky unsaved-changes bar */
+.st-dirty { position: sticky; bottom: 16px; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap;
+  background: var(--navy); color: #fff; border-radius: var(--r-lg); padding: 10px 12px 10px 18px; box-shadow: var(--shadow-3); animation: st-up var(--dur-panel) var(--ease-enter); }
+.st-dirty .btn-ghost { color: #fff; }
+.st-dirty .btn-ghost:hover { background: rgba(255, 255, 255, .12); }
+.st-dirty .ico { color: #FFC59E; }
+@keyframes st-up { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+@media (max-width: 1279px) { .st-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 767px) {
+  .st-grid { grid-template-columns: minmax(0, 1fr); }
+  .st-dnc-check { flex-wrap: wrap; width: 100%; }
+  .st-dnc-check .input { min-width: 0; flex: 1 1 160px; }
+  .st-narrow { min-width: 0; width: 100%; }
+  .st-line-modal { grid-template-columns: minmax(0, 1fr); }
+  .st-whrow { flex-wrap: wrap; }
+  .st-dirty { bottom: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .st-dirty { animation: none; } }
+html[data-motion="reduce"] .st-dirty { animation: none; }

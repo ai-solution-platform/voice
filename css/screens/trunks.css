@@ -1,0 +1,99 @@
+/* SIP Trunking — screen-owned styles (prefix tk-). Loaded because js/screens/trunks.js exports css = true. */
+
+.tk-price { justify-content: space-between; gap: 8px; }
+.tk-down { align-items: flex-start; flex-wrap: wrap; }
+.tk-down > .grow { min-width: 240px; }
+.tk-down-a { gap: 8px; }
+.tk-retest-res { animation: fadein var(--dur) var(--ease-enter); }
+.tk-filters { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+.tk-sel { width: auto; min-width: 170px; }
+.tk-search { display: flex; align-items: center; flex: 1 1 220px; max-width: 320px; position: relative; color: var(--slate); }
+.tk-search .ico { position: absolute; left: 10px; pointer-events: none; }
+.tk-search .input { padding-left: 32px; }
+.tk-tbl td { vertical-align: top; }
+.tk-tbl a.mono { color: var(--navy); text-decoration: none; }
+.tk-tbl a.mono:hover { text-decoration: underline; text-underline-offset: 3px; }
+.tk-row-down { box-shadow: inset 3px 0 0 var(--red); }
+.tk-rowact { justify-content: flex-end; flex-wrap: nowrap; gap: 6px; }
+.tk-stcell > .hint-xs { display: block; margin-top: 3px; }
+@media (max-width: 1279px) {
+  .tk-rowact { flex-direction: column; align-items: stretch; gap: 4px; }
+  .tk-tbl th, .tk-tbl td { padding-left: 10px; padding-right: 10px; }
+  .tk-tbl th { white-space: normal; }
+}
+.tk-empty .empty { padding: var(--s-6) var(--s-5); max-width: 680px; }
+.tk-empty h2 { font-size: var(--fs-lg); }
+.tk-back { text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-weight: 500; margin-bottom: 2px; }
+
+/* detail layout */
+.tk-dgrid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: var(--s-4); align-items: start; }
+.tk-big { font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+.tk-hsum { align-items: baseline; gap: 8px; }
+.tk-bars { display: grid; grid-template-columns: repeat(48, minmax(0, 1fr)); gap: 3px; height: 56px; align-items: stretch; }
+.tk-bars.is-7d { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.tk-bar { border-radius: 3px; background: var(--green); opacity: .85; transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); transform-origin: bottom; animation: tkgrow var(--dur-slow) var(--ease-enter) both; }
+.tk-bar:hover, .tk-bar:focus-visible { opacity: 1; transform: scaleY(1.06); }
+.tk-bar.is-warn { background: var(--amber); }
+.tk-bar.is-err { background: var(--red); }
+.tk-bar.is-none { background: #E3E8F0; }
+@keyframes tkgrow { from { transform: scaleY(.2); opacity: 0; } to { transform: none; opacity: .85; } }
+.tk-axis { justify-content: space-between; }
+.tk-statgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); }
+.tk-statgrid > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tk-statgrid strong { font-size: var(--fs-xl); font-weight: 700; }
+.tk-num { width: 72px; height: 32px; padding: 4px 8px; text-align: right; font-size: var(--fs-sm); }
+.tk-capnum { align-items: baseline; gap: 8px; }
+.tk-pwd { letter-spacing: .04em; }
+.tk-credact { gap: 8px; padding-top: 8px; }
+.tk-cred .card-body { display: flex; flex-direction: column; gap: 8px; }
+.tk-cred .wkv strong { overflow-wrap: anywhere; }
+.tk-iplist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tk-iplist li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--border); flex-wrap: wrap; animation: fadein var(--dur) var(--ease-enter); }
+.tk-iplist li:last-child { border-bottom: 0; }
+.tk-ipadd { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; }
+.tk-edge .card-head .select { width: auto; min-height: 32px; padding-top: 4px; padding-bottom: 4px; font-size: var(--fs-sm); }
+.tk-edge .wkv strong { overflow-wrap: anywhere; font-size: var(--fs-sm); }
+.tk-edgeact { gap: 8px; padding: 10px 0 6px; }
+.tk-evlist { list-style: none; margin: 0; padding: 4px var(--s-4) 12px; }
+.tk-evlist li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); flex-wrap: wrap; }
+.tk-evlist li:last-child { border-bottom: 0; }
+.tk-evlist li > .grow { min-width: 180px; }
+.tk-evdot { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; flex: none; background: var(--green-50); color: var(--green-700); margin-top: 1px; }
+.tk-evlist li.is-warn .tk-evdot { background: var(--amber-50); color: var(--amber-700); }
+.tk-evlist li.is-err .tk-evdot { background: var(--red-50); color: var(--red-700); }
+.tk-evlist time { white-space: nowrap; }
+.tk-danger .btn-danger-ghost { border-color: #F6C9CB; }
+.tk-danger .btn-danger-ghost:hover { background: var(--red-50); }
+.tk-mt { margin-top: 12px; }
+
+@media (max-width: 1319px) {
+  .tk-dgrid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 767px) {
+  .tk-tiles.g-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tk-search { max-width: none; flex-basis: 100%; }
+  .tk-sel { flex: 1 1 150px; min-width: 0; }
+  .tk-bars { gap: 1px; height: 44px; }
+  .tk-statgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tk-ipadd { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { .tk-bar { animation: none; } }
+html[data-motion="reduce"] .tk-bar { animation: none; }
+
+/* destinations: the URI may wrap so the table fits the card */
+.tk-desttbl th, .tk-desttbl td { padding-left: 8px; padding-right: 8px; }
+.tk-desttbl td.tk-uri { word-break: break-all; min-width: 120px; }
+.tk-desttbl th { white-space: normal; }
+
+/* phone: each trunk becomes a small card, actions in reach without sideways scrolling */
+@media (max-width: 767px) {
+  .tk-tbl { min-width: 0; }
+  .tk-tbl thead { display: none; }
+  .tk-tbl, .tk-tbl tbody, .tk-tbl tr, .tk-tbl td { display: block; width: 100%; }
+  .tk-tbl tr { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .tk-tbl td { padding: 3px 0; border: 0; text-align: left; white-space: normal; }
+  .tk-tbl td[data-label]::before { content: attr(data-label); display: block; font-size: var(--fs-xs); color: var(--slate); margin-bottom: 1px; font-family: var(--font-latin, inherit); }
+  .tk-tbl td.tk-c-act { padding-top: 8px; }
+  .tk-tbl .tk-rowact { flex-direction: row; justify-content: flex-start; }
+  .tk-tbl tr.tk-row-down { box-shadow: inset 3px 0 0 var(--red); }
+}

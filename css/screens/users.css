@@ -1,0 +1,58 @@
+/* Users & Roles — screen-owned styles (prefix us-). Loaded because js/screens/users.js exports css = true. */
+
+.us-tabs { align-self: flex-start; }
+.us-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font-size: var(--fs-sm); }
+.us-count { font-size: 11px; font-weight: 700; color: var(--slate); background: var(--border); border-radius: 9px; padding: 0 6px; }
+.us-tabs button[aria-selected="true"] .us-count { background: var(--navy-50); color: var(--navy); }
+.us-prev { min-height: 18px; padding: 0 7px; font-size: 11px; }
+
+.us-av { width: 30px; height: 30px; border-radius: 50%; background: var(--navy); color: #fff; display: inline-grid; place-items: center; font-weight: 700; font-size: var(--fs-sm); flex: none; }
+.us-av-pending { background: var(--amber-50); color: var(--amber-700); }
+.us-av-lg { width: 44px; height: 44px; font-size: var(--fs-lg); }
+.us-2fa { font-size: var(--fs-xs); }
+.us-roles { gap: 6px; }
+.us-rolechip { border: 1px solid var(--border); cursor: pointer; font: inherit; font-size: var(--fs-xs); font-weight: 600; }
+.us-rolechip:hover { border-color: var(--border-strong); background: #fff; }
+.us-alone { border-top: 1px solid var(--border); }
+.us-partner { align-items: center; flex-wrap: wrap; }
+.us-partner .grow { flex: 1 1 260px; }
+
+/* permission matrix */
+.us-mx td, .us-mx th { text-align: center; }
+.us-mx td:first-child, .us-mx th:first-child { text-align: left; }
+.us-mx .is-focus { background: var(--orange-50); }
+.us-y { color: var(--green-700); display: inline-grid; }
+.us-danger { border-top: 1px solid var(--border); padding-top: var(--s-3); }
+
+/* sub-accounts */
+.us-subline { align-items: center; flex-wrap: wrap; }
+.us-subline .grow { flex: 1 1 300px; }
+.us-subgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--s-4); }
+.us-sub { padding: var(--s-4); display: flex; flex-direction: column; gap: 2px; }
+.us-sub.is-susp { background: var(--sunken); }
+.us-sub.us-fresh { animation: us-in 1.4s var(--ease-out); }
+@keyframes us-in { 0% { box-shadow: 0 0 0 3px rgba(242, 99, 34, .35); } 100% { box-shadow: var(--shadow-1); } }
+.us-sub-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; margin-bottom: 6px; }
+.us-sub-head h3 { font-size: var(--fs-md); }
+.us-kv { display: flex; justify-content: space-between; gap: var(--s-3); padding: 7px 0; border-bottom: 1px dashed var(--border); font-size: var(--fs-sm); }
+.us-kv > span { color: var(--slate); }
+.us-kv > strong { text-align: right; font-weight: 600; }
+.us-sub-actions { margin-top: auto; padding-top: var(--s-3); gap: 6px; }
+.us-sub-new { border-style: dashed; background: var(--sunken); align-items: flex-start; justify-content: center; gap: 6px; min-height: 200px; text-align: left; cursor: pointer; color: var(--text); }
+.us-sub-new:hover { border-color: var(--slate); background: #fff; }
+
+/* audit */
+.us-filters { display: flex; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: flex-end; }
+.us-filters .field { min-width: 180px; }
+.us-filters .field.grow { flex: 1 1 220px; }
+.us-click { cursor: pointer; }
+.us-click:focus-visible { outline: 2px solid var(--navy); outline-offset: -2px; }
+.us-audit td:nth-child(3) { min-width: 260px; }
+
+@media (max-width: 767px) {
+  .us-tabs { max-width: 100%; }
+  .us-tabs button { padding: 6px 10px; }
+  .us-filters .field { min-width: 0; flex: 1 1 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .us-sub.us-fresh { animation: none; } }
+html[data-motion="reduce"] .us-sub.us-fresh { animation: none; }

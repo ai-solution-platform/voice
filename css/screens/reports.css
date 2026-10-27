@@ -1,0 +1,68 @@
+/* Reports — screen-owned styles (prefix rp-). Loaded because js/screens/reports.js exports css = true. */
+
+.rp .page-head .tools { justify-content: flex-end; align-items: flex-start; }
+.rp-gran { align-items: flex-end; max-width: 210px; }
+.rp-gran .hint-xs { text-align: right; line-height: 1.35; }
+.rp-gran .seg button[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
+.rp-gran .hint-xs:focus { outline: 2px solid var(--orange); outline-offset: 2px; border-radius: 4px; }
+.rp-nudge { animation: rp-nudge .4s var(--ease-out); }
+@keyframes rp-nudge { 0%, 100% { transform: none; } 30% { transform: translateX(-3px); } 60% { transform: translateX(3px); } }
+.rp-sub { width: auto; min-width: 170px; }
+.rp-actions { margin-top: -6px; }
+
+.rp-tile { color: inherit; text-decoration: none; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+.rp-tile:hover { border-color: var(--border-strong); box-shadow: var(--shadow-2); }
+.rp-tiles .tile .v { font-size: var(--fs-xl); }
+
+/* stacked outcome bars */
+.rp-legend { display: inline-flex; gap: 12px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--slate); }
+.rp-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.sw-answered { background: var(--green); }
+.sw-na { background: var(--amber); }
+.sw-bd { background: #F2C27A; }
+.sw-fb { background: var(--red); }
+.rp-bars { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 6px; height: 230px; align-items: end; }
+.rp-bar { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; color: inherit; text-decoration: none; border-radius: 6px; padding-top: 2px; }
+.rp-stack { width: 100%; max-width: 44px; display: flex; flex-direction: column; border-radius: 5px 5px 2px 2px; overflow: hidden; min-height: 3px;
+  transform-origin: bottom; animation: rp-grow var(--dur-slow) var(--ease-enter) both; }
+.rp-stack i { display: block; min-height: 0; }
+.rp-stack .an { background: var(--green); }
+.rp-stack .na { background: var(--amber); }
+.rp-stack .bd { background: #F2C27A; }
+.rp-stack .fb { background: var(--red); }
+.rp-bar:hover .rp-stack, .rp-bar:focus-visible .rp-stack { box-shadow: 0 0 0 2px rgba(20, 39, 74, .35); filter: brightness(1.05); }
+.rp-val { font-size: 11px; font-weight: 600; color: var(--text-2); margin-bottom: 4px; white-space: nowrap; }
+.rp-day { font-size: 11px; color: var(--slate); margin-top: 6px; white-space: nowrap; min-height: 14px; }
+.rp-bar.is-last .rp-day, .rp-bar.is-last .rp-val { color: var(--accent-fill); font-weight: 600; }
+@keyframes rp-grow { from { transform: scaleY(.15); opacity: .3; } to { transform: none; opacity: 1; } }
+
+.rp-click { cursor: pointer; }
+.rp-click:focus-visible { outline: 2px solid var(--navy); outline-offset: -2px; }
+.tbl tr.is-sel td { background: var(--orange-50); }
+.tbl tr.is-sel td:first-child { box-shadow: inset 3px 0 0 var(--orange); }
+.tbl tr.rp-total td { font-weight: 700; border-top: 2px solid var(--border-strong); }
+.rp-barcol { width: 22%; min-width: 120px; }
+.rp-share { width: 70px; display: block; }
+.rp-barcol .progress { display: block; }
+.rp-share > i { background: var(--navy); }
+.progress > i.rp-g-na { background: var(--amber); }
+.progress > i.rp-g-bd { background: #F2C27A; }
+.progress > i.rp-g-fb { background: var(--red); }
+.rp-empty .empty { padding: var(--s-7) var(--s-4); }
+
+@media (max-width: 1279px) {
+  .rp .rp-charts { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 767px) {
+  .rp-bars { gap: 3px; height: 200px; }
+  .rp-val { display: none; }
+  .rp-day { font-size: 9px; }
+  .rp-gran { align-items: flex-start; max-width: none; }
+  .rp-gran .hint-xs { text-align: left; }
+  .rp-barcol { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .rp-stack, .rp-nudge { animation: none; } }
+html[data-motion="reduce"] .rp-stack, html[data-motion="reduce"] .rp-nudge { animation: none; }
+.rp-def { display: flex; gap: 6px; align-items: flex-start; margin: calc(-1 * var(--s-2)) 0 0; }
+.rp-def .ico { flex: none; margin-top: 2px; }

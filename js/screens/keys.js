@@ -1,0 +1,687 @@
+// API keys & Webhooks — #/keys?tab=keys|webhooks|events   (?section=webhooks is accepted too)
+// Keys, webhook endpoints, failed deliveries, an event inspector and "Verify a signature".
+// Secrets are visibly fake and shown once: ak_live_DEMO_…_not_a_real_key, whsec_DEMO_…_not_a_real_secret.
+// Rotate / Revoke / Rotate secret ask you to type the name; a revoked key has no actions except Hide;
+// removing a row before saving offers Undo.
+
+import { raw, reducedMotion } from '../core/dom.js';
+import { newId, audit, setStep } from '../core/actions.js';
+import { nowMs } from '../data/clock.js';
+import { DEMO_KEY_SANDBOX, DEMO_KEY_LIVE, maskKey, API_BASE } from '../data/edge.js';
+import { PRICES } from '../data/prices.js';
+
+export const id = 'keys';
+export const nav = { group: 'account', icon: 'key', labelKey: 'nav.keys' };
+export const titleKey = 'nav.keys';
+export const skeleton = 'table';
+export const css = true;
+
+const KEY_RE = /^[a-z0-9-]{3,32}$/;
+const IP_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}(\/(3[0-2]|[12]?\d))?$/;
+const URL_RE = /^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(:\d{2,5})?(\/[\w./-]*)?$/i;
+const SCOPES = ['calls:write', 'broadcasts:write', 'numbers:write', 'otp:write', 'read'];
+const EVENTS = ['call.completed', 'call.*', 'otp.*', 'broadcast.*', 'recording.ready', 'number.*'];
+const TABS = ['keys', 'webhooks', 'events'];
+const RETRY = [1, 5, 30, 120, 600];
+const noop = () => {};
+
+export const initialState = () => ({ env: 'all', showRevoked: false, hidden: [], shown: null, creating: false, tests: {}, resending: {}, sent: [], evQ: '', evStatus: 'all', verify: { wh: null, ts: null, payload: null, sig: '', result: null, busy: false }, seq: 3 });
+
+// the tab bar already says where you are; a crumb would only repeat it
+export function crumb() { return ''; }
+
+export const commands = [
+  { id: 'wh', labelKey: 'cmd.webhooks', icon: 'link', keywords: ['webhooks events deliveries signature'], run: ({ go }) => go('keys?tab=webhooks') },
+];
+
+// ---------- helpers ----------
+function tabOf(params) {
+  const q = params.query || {};
+  const v = q.tab || q.section;
+  return TABS.includes(v) ? v : 'keys';
+}
+const onKeys = () => /^#\/keys(\?|$)/.test(location.hash);
+function soon(ctx, fn, ms) {
+  const st = ctx.state;
+  setTimeout(() => { if (st === ctx.state) fn(st); }, reducedMotion() ? Math.min(ms, 250) : ms);
+}
+const redraw = (ctx) => { if (onKeys()) ctx.rerender(); };
+const hostOf = (url) => { try { return new URL(url).host; } catch { return url; } };
+const secretOf = (wh) => `whsec_DEMO_${wh.secretLast4}_not_a_real_secret`;
+const maskSecret = (wh) => `whsec_DEMO••••${wh.secretLast4}`;
+const firstRun = (ctx) => ctx.store.get('mode') === 'firstRun';
+// store reasons are English API text; show them in the UI language
+function reasonText(r, t) {
+  if (!r) return '';
+  if (/Timed out/i.test(r)) return t('rsn.timeout', { s: 5 });
+  const m = /HTTP (\d{3})/.exec(r);
+  return m ? `HTTP ${m[1]} · ${t(`wt.code.${m[1]}`)}` : r;
+}
+
+async function hmacHex(secret, msg) {
+  const enc = new TextEncoder();
+  try {
+    if (window.crypto && crypto.subtle) {
+      const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+      const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg));
+      return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch { /* fall through */ }
+  // No Web Crypto (old browser, insecure context): a stable demo hash so the helper still works.
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (const c of secret + '|' + msg) { h1 = Math.imul(h1 ^ c.charCodeAt(0), 16777619) >>> 0; h2 = Math.imul(h2 + c.charCodeAt(0), 2654435761) >>> 0; }
+  return (h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0')).repeat(4);
+}
+
+function samplePayload(ctx) {
+  const c = ctx.list('calls')[0];
+  return JSON.stringify({ event: 'call.completed', id: 'evt_01JBKX5B7C', data: { call_id: c ? c.id : 'call_01JBTEST0001', status: 'completed', sip_code: 200, talk_seconds: c ? c.sec : 18, price: c ? c.credits : PRICES.outbound, price_unit: 'credits' } });
+}
+
+/** Recent deliveries: built from the call log and the failed events, plus test events sent here. */
+function eventsList(ctx) {
+  const whs = ctx.list('webhooks');
+  const hooks = whs.find((w) => w.url.includes('hooks.example.com'));
+  const crm = whs.find((w) => w.url.includes('crm.example.com'));
+  const out = [...ctx.state.sent];
+  const failed = new Set(ctx.list('failedEvents').map((e) => e.id));
+  ctx.list('failedEvents').forEach((e, i) => {
+    out.push({ id: e.id, at: new Date(new Date(ctx.list('calls')[0] ? ctx.list('calls')[0].ts : nowMs()).getTime() - (i + 1) * 61000).toISOString(), event: e.event, url: crm ? crm.url : `https://${e.endpoint}`, code: /Timed out/.test(e.reason) ? null : 503, ms: /Timed out/.test(e.reason) ? 5000 : 1204, status: 'failed', attempts: e.attempts, reason: e.reason });
+  });
+  ctx.list('calls').slice(0, 18).forEach((c, i) => {
+    const tail = c.id.slice(-8);
+    const toCrm = crm && c.sub === 'sub_01JB2DV7RX' && c.source && ['campaign', 'notification', 'click-to-call'].includes(c.source.type);
+    const late = new Date(c.ts).getTime() >= new Date(ctx.list('calls')[0].ts).getTime() - 10 * 60000;
+    const ev = { id: `evt_01JB${tail}`, at: new Date(new Date(c.ts).getTime() + Math.max(1, c.sec || 0) * 1000 + 800).toISOString(), event: 'call.completed', callId: c.id, call: c };
+    if (toCrm && crm) {
+      if (failed.has(ev.id)) return;
+      out.push({ ...ev, url: crm.url, code: late ? 503 : 200, ms: late ? 1204 : 214, status: late ? (crm.status === 'off' ? 'failed' : 'retrying') : 'delivered', attempts: late ? 2 + (i % 3) : 1 });
+    } else if (hooks) {
+      out.push({ ...ev, url: hooks.url, code: 200, ms: 150 + ((i * 37) % 90), status: 'delivered', attempts: 1 });
+      if (c.recorded) out.push({ ...ev, id: `evt_01JR${tail}`, event: 'recording.ready', url: hooks.url, code: 200, ms: 171, status: 'delivered', attempts: 1, at: new Date(new Date(ev.at).getTime() + 4000).toISOString() });
+    }
+  });
+  return out.sort((a, b) => (a.at < b.at ? 1 : -1));
+}
+
+function payloadOf(ctx, ev) {
+  const { fmt } = ctx;
+  const c = ev.call;
+  const data = c ? {
+    call_id: c.id, direction: c.direction, from: e164(c.from), to: e164(c.to), status: c.status, sip_code: c.sip, talk_seconds: c.sec,
+    billed_minutes: c.billedMin, price: c.credits, price_unit: 'credits', subaccount_id: c.sub,
+  } : ev.data || { note: 'sample' };
+  if (ev.event === 'recording.ready') return { event: ev.event, id: ev.id, created_at: fmt.iso(ev.at), data: { call_id: c.id, recording_url: `${API_BASE}/voice/calls/${c.id}/recording`, duration_seconds: c.sec, expires_in_days: 90 } };
+  return { event: ev.event, id: ev.id, created_at: fmt.iso(ev.at), data };
+}
+const e164 = (num) => (num && /^0/.test(num) ? '+66' + num.replace(/^0/, '').replace(/-/g, '') : num);
+
+// ---------- pieces ----------
+function header(ctx, tab) {
+  const { t, html: h, icon } = ctx;
+  return h`<div class="page-head"><div class="titles"><h1>${t('title')}${ctx.pageHelp()}</h1><span class="sub">${t('sub')}</span></div>
+    <div class="tools"><a class="btn" href="#/connect/api" data-action="ky.connect">${icon('plug')}${t('connect')}</a>
+      ${tab === 'keys' ? h`<button type="button" class="btn btn-primary" data-action="ky.create">${icon('plus')}${t('create')}</button>` : tab === 'webhooks' ? h`<button type="button" class="btn btn-primary" data-action="wh.add">${icon('plus')}${t('wh.add')}</button>` : ''}</div></div>`;
+}
+
+function tabs(ctx, tab) {
+  const { t, html: h } = ctx;
+  const failed = ctx.list('failedEvents').length;
+  return h`<div class="seg ky-tabs" role="tablist" aria-label="${t('tabsAria')}">${TABS.map((k) => h`<a role="tab" href="#/keys?tab=${k}" data-action="ky.tab" aria-selected="${tab === k}" ${raw(tab === k ? 'aria-current="page"' : '')}>${t(`tab.${k}`)}${k === 'webhooks' && failed ? h` <span class="badge badge-err">${failed}</span>` : ''}</a>`)}</div>`;
+}
+
+function tiles(ctx) {
+  const { t, html: h, fmt } = ctx;
+  const kt = ctx.store.get('keyTiles') || { requests24h: 0, error4xxPct: 0, webhookDeliveryPct: null, webhookEvents24h: 0, retried24h: 0 };
+  const active = ctx.list('apiKeys').filter((k) => k.status === 'active').length;
+  const failed = ctx.list('failedEvents').length;
+  return h`<div class="grid g-4 ky-tiles">
+    <div class="card tile"><span class="t">${t('tile.active')}</span><span class="v">${fmt.int(active)}</span><span class="h">${t('tile.activeLine', { live: fmt.int(ctx.list('apiKeys').filter((k) => k.status === 'active' && k.env === 'live').length), sandbox: fmt.int(ctx.list('apiKeys').filter((k) => k.status === 'active' && k.env === 'sandbox').length) })}</span></div>
+    <div class="card tile"><span class="t">${t('tile.requests')}</span><span class="v">${fmt.int(kt.requests24h)}</span><span class="h">${t('tile.requestsLine', { pct: fmt.pct(kt.error4xxPct) })}</span></div>
+    <a class="card tile tile-link" href="#/keys?tab=events" data-action="ky.tile.delivery"><span class="t">${ctx.term(t('tile.delivery'), 'webhook')}</span><span class="v">${kt.webhookDeliveryPct != null ? fmt.pct(kt.webhookDeliveryPct) : '—'}</span><span class="h">${t('tile.deliveryLine', { n: fmt.int(kt.webhookEvents24h), r: fmt.int(kt.retried24h) })}</span></a>
+    <a class="card tile tile-link ${failed ? 'ky-tile-warn' : ''}" href="#/keys?tab=webhooks&focus=failed" data-action="ky.tile.failed"><span class="t">${t('tile.failed')}</span><span class="v">${fmt.int(failed)}</span><span class="h">${failed ? t('tile.failedLine') : t('tile.failedNone')}</span></a>
+  </div>`;
+}
+
+function shownBanner(ctx) {
+  const { t, html: h, icon } = ctx;
+  const s = ctx.state;
+  if (s.creating) return h`<div class="note note-info ky-shown" role="status"><span class="spin" aria-hidden="true"></span><span>${t('banner.creating')}</span></div>`;
+  if (!s.shown || s.shown.saved) return '';
+  const k = ctx.list('apiKeys').find((x) => x.id === s.shown.keyId);
+  return h`<div class="note note-ok ky-shown" role="status">${icon('key')}<div class="grow stack" style="gap:6px">
+    <strong>${s.shown.kind === 'rotate' ? t('banner.rotated', { name: k ? k.name : '' }) : t('banner.created', { name: k ? k.name : '' })}</strong>
+    <div class="input-group"><code class="code-inline mono grow ky-secret" translate="no" id="ky-secret">${s.shown.value}</code>
+      <button type="button" class="btn btn-sm" data-action="ky.banner.copy">${icon('copy', 'ico-sm')}${t('common.copy')}</button></div>
+    <span class="hint-xs">${s.shown.kind === 'rotate' ? t('banner.rotateHint', { until: ctx.fmt.dateTime(k && k.oldUntil ? k.oldUntil : nowMs() + 86400000) }) : t('banner.hint')}</span>
+    <div><button type="button" class="btn btn-sm btn-navy" data-action="ky.banner.saved">${icon('check')}${t('banner.saved')}</button></div></div></div>`;
+}
+
+function keysTab(ctx) {
+  const { t, html: h, icon, fmt } = ctx;
+  const s = ctx.state;
+  const all = ctx.list('apiKeys');
+  if (!all.length && !s.creating) {
+    return h`${shownBanner(ctx)}<div class="card ky-empty"><div class="empty"><span class="art">${icon('key')}</span><h2>${t('empty.title')}</h2><p class="hint">${t('empty.body')}</p>
+      <div class="row"><button type="button" class="btn btn-primary" data-action="ky.empty.create">${icon('plus')}${t('create')}</button><a class="btn" href="#/connect/api" data-action="ky.empty.connect">${icon('code')}${t('empty.quickstart')}</a></div></div></div>`;
+  }
+  const hiddenCount = all.filter((k) => s.hidden.includes(k.id)).length;
+  const visible = all.filter((k) => (s.env === 'all' || k.env === s.env) && (!s.hidden.includes(k.id) || s.showRevoked));
+  return h`${shownBanner(ctx)}
+    ${ctx.store.get('env') === 'sandbox' ? h`<div class="note note-warn">${icon('info')}<span>${t('sandboxNote')}</span></div>` : ''}
+    <div class="row ky-filters"><div class="seg" role="group" aria-label="${t('f.envAria')}">${['all', 'live', 'sandbox'].map((k) => h`<button type="button" data-action="ky.env" data-value="${k}" aria-pressed="${s.env === k}">${t(`f.env.${k}`)}</button>`)}</div>
+      <span class="grow"></span>${hiddenCount ? h`<button type="button" class="linkbtn hint-xs" data-action="ky.revoked.show" aria-pressed="${s.showRevoked}">${s.showRevoked ? t('f.hideRevoked') : t('f.showRevoked', { n: hiddenCount })}</button>` : ''}</div>
+    ${visible.length ? h`<div class="card"><div class="tbl-wrap"><table class="tbl ky-tbl"><thead><tr><th>${t('col.name')} · ${t('col.sub')}</th><th>${t('col.key')} · ${ctx.term(t('col.env'), 'env')}</th><th>${ctx.term(t('col.scopes'), 'scope')}</th><th>${ctx.term(t('col.ips'), 'ip_allow')}</th><th class="ky-c-created">${t('col.created')}</th><th>${t('col.status')} · ${t('col.used')}</th><th><span class="sr-only">${t('col.actions')}</span></th></tr></thead>
+      <tbody>${visible.map((k) => h`<tr class="${k.status === 'revoked' ? 'ky-revoked' : ''} ${s.fresh === k.id ? 'new-row' : ''}">
+        <td><strong class="mono" translate="no">${k.name}</strong><div class="hint-xs ky-sub">${ctx.ui.describe.sub(k.sub)}</div></td>
+        <td class="ky-c-key"><div class="ky-keycell"><span class="mono" translate="no">${maskKey(k.prefix, k.last4)}</span><span class="chip ${k.env === 'live' ? 'chip-ok' : 'chip-warn'}">${k.env === 'live' ? t('top.live') : t('top.sandbox')}</span></div>${k.status !== 'revoked' && k.oldUntil && nowMs() < new Date(k.oldUntil).getTime() ? h`<div class="hint-xs">${t('old.until', { old: maskKey(k.prefix, k.oldLast4), until: fmt.dateTime(k.oldUntil) })}</div>` : ''}</td>
+        <td class="ky-c-scopes" data-label="${t('col.scopes')}"><div class="ky-scopes">${k.scopes.map((sc) => h`<code class="mono">${sc}</code>`)}</div></td>
+        <td class="ky-c-ips" data-label="${t('col.ips')}">${k.allowedIps && k.allowedIps.length ? h`<div class="ky-ips mono" translate="no">${k.allowedIps.map((ip) => h`<span>${ip}</span>`)}</div>` : h`<span class="hint-xs ${k.env === 'live' && k.status === 'active' ? 'warn-text' : ''}">${k.env === 'live' && k.status === 'active' ? t('ips.anySuggest') : t('ips.any')}</span>`}</td>
+        <td class="nowrap ky-c-created">${fmt.dayMonth(k.createdAt)}<div class="hint-xs">${k.createdBy || '—'}</div></td>
+        <td class="nowrap ky-c-status">${k.status === 'revoked' ? h`<span class="chip chip-err" tabindex="0" data-tip-key="keys.tip.revoked">${t('st.revokedOn', { date: fmt.dayMonth(k.revokedAt) })}</span>` : h`<span class="chip chip-ok" tabindex="0" data-tip-key="keys.tip.active">${t('st.active')}</span>`}<div class="hint-xs ky-used">${k.lastUsed ? fmt.relative(k.lastUsed) : t('used.never')}</div></td>
+        <td class="num ky-c-act">${k.status === 'revoked'
+          ? h`<button type="button" class="btn btn-sm btn-ghost" data-action="ky.revoked.hide" data-value="${k.id}">${s.hidden.includes(k.id) ? t('unhide') : t('hide')}</button>`
+          : h`<button type="button" class="btn btn-sm btn-ghost btn-icon" data-action="ky.menu" data-value="${k.id}" aria-haspopup="menu" aria-expanded="false" aria-label="${t('menuFor', { name: k.name })}" data-tip-key="keys.menuTip">${icon('more')}</button>`}</td></tr>`)}</tbody></table></div>
+      <div class="card-foot hint-xs">${t('foot')}</div></div>`
+      : h`<div class="card"><div class="empty empty-center" role="status"><strong>${t('noMatch')}</strong><button type="button" class="btn btn-sm" data-action="ky.clear">${t('clear')}</button></div></div>`}`;
+}
+
+function whCard(ctx, wh) {
+  const { t, html: h, icon, fmt } = ctx;
+  const test = ctx.state.tests[wh.id];
+  const st = wh.status;
+  const ld = wh.lastDelivery;
+  const steps = test ? [
+    { k: 'sign', on: test.step >= 1, label: t('wt.sign') },
+    { k: 'send', on: test.step >= 2, label: t('wt.send', { host: hostOf(wh.url) }) },
+  ] : [];
+  return h`<section class="card ky-wh ${st === 'failing' ? 'is-failing' : st === 'off' ? 'is-off' : ''}" aria-label="${hostOf(wh.url)}">
+    <div class="ky-wh-h"><span class="ky-wh-ico">${icon('link', 'ico-sm')}</span>
+      <div class="grow stack" style="gap:2px"><strong class="mono ky-url" translate="no">${wh.url}</strong>
+        <div class="row-tight ky-evchips">${wh.events.map((e) => h`<code class="mono">${e}</code>`)}</div></div>
+      ${st === 'active' ? h`<span class="chip chip-ok">${t('wst.active')}</span>` : st === 'failing' ? h`<span class="chip chip-err" tabindex="0" data-tip-key="keys.tip.failing">${t('wst.failing', { n: wh.failuresInRow })}</span>` : h`<span class="chip" tabindex="0" data-tip-key="keys.tip.off">${wh.failuresInRow >= 100 ? t('wst.autoOff') : t('wst.off')}</span>`}
+      <button type="button" class="toggle" role="switch" data-action="wh.toggle" data-value="${wh.id}" aria-checked="${st !== 'off'}" aria-label="${t('wh.toggleFor', { host: hostOf(wh.url) })}"></button></div>
+    <div class="ky-wh-b">
+      <div class="wkv"><span class="k">${ctx.term(t('wh.secret'), 'signing_secret')}</span><strong class="mono" translate="no">${maskSecret(wh)}</strong>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="wh.rotate" data-value="${wh.id}">${icon('refresh', 'ico-sm')}${t('wh.rotate')}</button></div>
+      <div class="wkv"><span class="k">${t('wh.last')}</span><span>${ld ? h`<span class="mono">${fmt.time(ld.at)}</span> · ${ld.timeout ? t('wh.timeout') : h`<span class="${ld.code >= 400 ? 'err-text' : 'ok-text'} strong">${ld.code}</span>${ld.ms ? ` · ${t('wt.ms', { ms: fmt.int(ld.ms) })}` : ''}`}` : t('wh.never')}</span><span></span></div>
+      ${st === 'failing' ? h`<p class="hint-xs err-text">${t('wh.failingHint', { n: wh.failuresInRow, schedule: RETRY.map((x) => `${x} s`).join(' · ') })}</p>` : ''}
+      ${st === 'off' && wh.failuresInRow >= 100 ? h`<p class="hint-xs">${t('wh.autoOffHint')}</p>` : ''}
+      ${test ? h`<ol class="ky-test" aria-live="polite">${steps.map((x) => h`<li class="${x.on ? 'is-on' : ''}">${x.on ? icon('check', 'ico-xs') : raw('<span class="spin" aria-hidden="true"></span>')}<span>${x.label}</span></li>`)}
+        ${test.step >= 3 ? h`<li class="is-res ${test.ok ? 'is-ok' : 'is-bad'}">${icon(test.ok ? 'check-circle' : 'alert-circle', 'ico-sm')}<span><strong>${test.code ? test.code : t('wt.noResp')}</strong> ${test.code ? t(`wt.code.${test.code}`) : ''} · ${t('wt.ms', { ms: fmt.int(test.ms) })} <span class="hint-xs">${t('wt.simulated')}</span>${test.ok ? '' : h`<br><span class="hint-xs">${t('wt.retryNote', { schedule: RETRY.map((x) => `${x} s`).join(' · ') })}</span>`}</span>
+          <button type="button" class="linkbtn hint-xs" data-action="wh.test.view" data-value="${wh.id}">${t('wt.view')}</button></li>` : ''}</ol>` : ''}
+      <div class="row ky-wh-a"><button type="button" class="btn btn-sm btn-navy" data-action="wh.test" data-value="${wh.id}" ${raw(test && test.step < 3 ? 'aria-busy="true"' : '')}>${test && test.step < 3 ? raw('<span class="spin" aria-hidden="true"></span>') : icon('send', 'ico-sm')}${t('wh.test')}</button>
+        <button type="button" class="btn btn-sm" data-action="wh.edit" data-value="${wh.id}">${icon('edit', 'ico-sm')}${t('wh.edit')}</button>
+        <a class="btn btn-sm btn-ghost" href="#/keys?tab=events&host=${encodeURIComponent(hostOf(wh.url))}" data-action="wh.events">${t('wh.deliveries')}</a></div>
+    </div></section>`;
+}
+
+function verifyCard(ctx) {
+  const { t, html: h, icon } = ctx;
+  const v = ctx.state.verify;
+  const whs = ctx.list('webhooks');
+  if (!whs.length) return '';
+  const whId = v.wh || whs[0].id;
+  return h`<section class="card ky-verify" aria-labelledby="ky-v-h"><div class="card-head"><h2 id="ky-v-h">${t('ver.title')}</h2><a class="linkbtn hint-xs" href="#/help/article/webhooks-signature" data-action="wh.verify.help">${icon('book', 'ico-xs')}${t('ver.help')}</a></div>
+    <div class="card-body stack-3">
+      <p class="hint">${t('ver.how')}</p>
+      <pre class="code ky-sigcode" translate="no">X-ANTS-Timestamp: ${v.ts || '…'}
+X-ANTS-Signature: v1=HMAC-SHA256(secret, timestamp + "." + body)</pre>
+      <div class="ky-v-grid">
+        <label class="field"><span class="label">${t('ver.endpoint')}</span><select class="select" data-field="vWh" data-action="wh.verify.wh">${whs.map((w) => h`<option value="${w.id}" ${raw(whId === w.id ? 'selected' : '')}>${hostOf(w.url)} · ${maskSecret(w)}</option>`)}</select></label>
+        <label class="field"><span class="label">X-ANTS-Timestamp</span><input class="input mono" data-field="vTs" data-action="wh.verify.ts" value="${v.ts || ''}" inputmode="numeric" translate="no"></label></div>
+      <label class="field"><span class="label">${t('ver.body')}</span><textarea class="textarea mono ky-v-body" rows="3" data-field="vBody" data-action="wh.verify.body" spellcheck="false" translate="no">${v.payload || ''}</textarea></label>
+      <label class="field"><span class="label">X-ANTS-Signature</span><input class="input mono" data-field="vSig" data-action="wh.verify.sig" value="${v.sig}" spellcheck="false" translate="no"></label>
+      <div class="row"><button type="button" class="btn btn-navy btn-sm" data-action="wh.verify" ${raw(v.busy ? 'aria-busy="true"' : '')}>${v.busy ? raw('<span class="spin" aria-hidden="true"></span>') : icon('shield-check', 'ico-sm')}${t('ver.check')}</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-action="wh.verify.reset">${t('ver.reset')}</button>
+        <span aria-live="polite">${v.result === 'ok' ? h`<span class="chip chip-ok">${icon('check')}${t('ver.ok')}</span>` : v.result === 'old' ? h`<span class="chip chip-warn">${icon('clock')}${t('ver.old')}</span>` : v.result === 'bad' ? h`<span class="chip chip-err">${icon('x')}${t('ver.bad')}</span>` : ''}</span></div>
+      <p class="hint-xs">${t('ver.note', { schedule: RETRY.map((x) => `${x} s`).join(' · ') })}</p></div></section>`;
+}
+
+function failedCard(ctx) {
+  const { t, html: h, icon } = ctx;
+  const list = ctx.list('failedEvents');
+  const rs = ctx.state.resending;
+  return h`<section class="card ky-failed" aria-labelledby="ky-f-h"><div class="card-head"><h2 id="ky-f-h">${t('fail.title')}</h2>
+      ${list.length ? h`<button type="button" class="btn btn-sm" data-action="wh.fail.resendall" ${raw(Object.keys(rs).length ? 'aria-busy="true"' : '')}>${icon('refresh', 'ico-sm')}${t('fail.resendAll', { n: list.length })}</button>` : ''}</div>
+    ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('fail.event')} · ${t('fail.endpoint')}</th><th class="num">${t('fail.attempts')}</th><th>${t('fail.reason')}</th><th><span class="sr-only">${t('col.actions')}</span></th></tr></thead>
+      <tbody>${list.map((e) => h`<tr class="${rs[e.id] ? 'ky-resending' : ''}"><td><span class="mono">${e.event}</span><div><button type="button" class="linkbtn mono hint-xs" data-action="wh.fail.view" data-value="${e.id}" translate="no">${e.id}</button></div><div class="hint-xs mono">${e.endpoint}</div></td><td class="num mono">${e.attempts}<div class="hint-xs">${e.window}</div></td><td class="err-text">${reasonText(e.reason, t)}</td>
+        <td class="num"><button type="button" class="btn btn-sm" data-action="wh.fail.resend" data-value="${e.id}" ${raw(rs[e.id] ? 'aria-busy="true"' : '')}>${rs[e.id] ? raw('<span class="spin" aria-hidden="true"></span>') : icon('send', 'ico-sm')}${t('fail.resend')}</button></td></tr>`)}</tbody></table></div>`
+      : h`<div class="empty"><span class="hint">${icon('check-circle', 'ico-sm')} ${t('fail.none')}</span></div>`}</section>`;
+}
+
+function webhooksTab(ctx) {
+  const { t, html: h, icon } = ctx;
+  const whs = ctx.list('webhooks');
+  if (!whs.length) {
+    return h`<div class="card ky-empty"><div class="empty"><span class="art">${icon('link')}</span><h2>${t('wh.emptyTitle')}</h2><p class="hint">${t('wh.emptyBody')}</p>
+      <div class="row"><button type="button" class="btn btn-primary" data-action="wh.empty.add">${icon('plus')}${t('wh.add')}</button></div></div></div>`;
+  }
+  return h`<div class="ky-wgrid"><div class="stack-4">${whs.map((w) => whCard(ctx, w))}${failedCard(ctx)}</div><div class="stack-4">${verifyCard(ctx)}</div></div>`;
+}
+
+function eventsTab(ctx) {
+  const { t, html: h, icon, fmt } = ctx;
+  const s = ctx.state;
+  const all = eventsList(ctx);
+  if (!all.length) {
+    return h`<div class="card ky-empty"><div class="empty"><span class="art">${icon('activity')}</span><h2>${t('ev.emptyTitle')}</h2><p class="hint">${t('ev.emptyBody')}</p>
+      <a class="btn btn-sm" href="#/keys?tab=webhooks" data-action="ev.empty.webhooks">${t('tab.webhooks')}</a></div></div>`;
+  }
+  const host = ctx.params.query.host || '';
+  const q = s.evQ.trim().toLowerCase();
+  const rows = all.filter((e) => (s.evStatus === 'all' || e.status === s.evStatus) && (!host || hostOf(e.url) === host) && (!q || e.id.toLowerCase().includes(q) || e.event.toLowerCase().includes(q) || (e.callId || '').toLowerCase().includes(q)));
+  return h`<div class="row ky-filters">
+      <label class="ky-search">${icon('search', 'ico-sm')}<input class="input mono" type="search" data-field="evQ" data-action="wh.ev.search" value="${s.evQ}" placeholder="evt_01JB… · call.completed" aria-label="${t('ev.searchAria')}" autocomplete="off" spellcheck="false"></label>
+      <select class="select ky-sel" data-field="evStatus" data-action="wh.ev.status" aria-label="${t('ev.statusAria')}">${['all', 'delivered', 'retrying', 'failed'].map((k) => h`<option value="${k}" ${raw(s.evStatus === k ? 'selected' : '')}>${t(`ev.st.${k}`)}</option>`)}</select>
+      ${host ? h`<span class="chip chip-navy mono">${host}<button type="button" class="chip-x" data-action="wh.ev.host" aria-label="${t('ev.clearHost')}">${icon('x', 'ico-xs')}</button></span>` : ''}
+      <span class="grow"></span><span class="hint-xs">${t('ev.kept')}</span></div>
+    ${rows.length ? h`<div class="card"><div class="tbl-wrap"><table class="tbl ky-evtbl"><thead><tr><th>${t('ev.time')}</th><th>${t('ev.event')} · ${t('ev.id')}</th><th>${t('ev.endpoint')}</th><th>${t('ev.status')}</th><th class="num">${t('ev.attempts')}</th><th class="num">${t('ev.ms')}</th></tr></thead>
+      <tbody>${rows.slice(0, 40).map((e) => h`<tr class="${s.freshEv === e.id ? 'new-row' : ''}"><td class="mono">${fmt.time(e.at)}</td><td><span class="mono">${e.event}</span><div><button type="button" class="linkbtn mono hint-xs" data-action="wh.ev.row" data-value="${e.id}" translate="no">${e.id}</button></div></td>
+        <td class="mono">${hostOf(e.url)}</td>
+        <td><span class="chip ${e.status === 'delivered' ? 'chip-ok' : e.status === 'retrying' ? 'chip-warn' : 'chip-err'}">${e.code ? `${e.code} · ` : ''}${t(`ev.st.${e.status}`)}</span></td>
+        <td class="num mono">${e.attempts}</td><td class="num mono">${fmt.int(e.ms)}</td></tr>`)}</tbody></table></div>
+      <div class="card-foot hint-xs">${t('ev.foot', { n: fmt.int(rows.length), shown: fmt.int(Math.min(40, rows.length)) })}</div></div>`
+      : h`<div class="card"><div class="empty empty-center" role="status"><strong>${t('ev.noMatch')}</strong><button type="button" class="btn btn-sm" data-action="wh.ev.clear">${t('clear')}</button></div></div>`}`;
+}
+
+export function render(ctx) {
+  const { html: h } = ctx;
+  const tab = tabOf(ctx.params);
+  const body = tab === 'webhooks' ? webhooksTab(ctx) : tab === 'events' ? eventsTab(ctx) : keysTab(ctx);
+  return h`<div class="page ky">${header(ctx, tab)}${tiles(ctx)}${tabs(ctx, tab)}<div class="ky-body" role="tabpanel">${body}</div></div>`;
+}
+
+// ---------- modals ----------
+function createKeyModal(ctx) {
+  const { t, html: h, icon } = ctx;
+  const subs = ctx.list('subAccounts');
+  const liveLocked = firstRun(ctx);
+  const d = { name: '', env: liveLocked ? 'sandbox' : 'live', scopes: ['calls:write', 'read'], sub: subs[0] ? subs[0].id : '', ips: '', expiry: 'never', errs: {} };
+  const body = () => h`<div class="stack-3">
+    <label class="field"><span class="label">${t('cm.name')}</span><input class="input mono" data-m="name" value="${d.name}" placeholder="backend-server" maxlength="32" spellcheck="false" translate="no" autocomplete="off" aria-invalid="${d.errs.name ? 'true' : 'false'}" aria-describedby="ky-cm-name-h">
+      ${d.errs.name ? h`<span class="field-err" id="ky-cm-name-h">${d.errs.name}</span>` : h`<span class="hint-xs" id="ky-cm-name-h">${t('cm.nameHint')}</span>`}</label>
+    <div class="field"><span class="label">${ctx.term(t('cm.env'), 'env')}</span><div class="seg" role="group" aria-label="${t('cm.env')}">
+      <button type="button" data-action="ky.cm.env" data-value="sandbox" aria-pressed="${d.env === 'sandbox'}">${t('top.sandbox')}</button>
+      <button type="button" data-action="ky.cm.env" data-value="live" aria-pressed="${d.env === 'live'}" ${raw(liveLocked ? 'aria-disabled="true" aria-describedby="ky-cm-live-h"' : '')}>${t('top.live')}</button></div>
+      ${liveLocked ? h`<span class="hint-xs" id="ky-cm-live-h">${t('cm.liveLocked')}</span>` : h`<span class="hint-xs">${d.env === 'live' ? t('cm.liveHint') : t('cm.sandboxHint')}</span>`}</div>
+    <fieldset class="ky-fs"><legend class="label">${ctx.term(t('cm.scopes'), 'scope')}</legend><div class="ky-checks">${SCOPES.map((sc) => h`<label class="check"><input type="checkbox" data-m="scope" value="${sc}" ${raw(d.scopes.includes(sc) ? 'checked' : '')}><code class="mono">${sc}</code><span class="hint-xs">${t(`scope.${sc.replace(':', '_')}`)}</span></label>`)}</div>
+      ${d.errs.scopes ? h`<span class="field-err">${d.errs.scopes}</span>` : ''}</fieldset>
+    ${subs.length > 1 ? h`<label class="field"><span class="label">${ctx.term(t('cm.sub'), 'subaccount')}</span><select aria-label="${t('cm.sub')}" class="select" data-m="sub">${subs.map((x) => h`<option value="${x.id}" ${raw(d.sub === x.id ? 'selected' : '')}>${ctx.loc(x.name)}</option>`)}</select></label>` : ''}
+    <label class="field"><span class="label">${ctx.term(t('cm.ips'), 'ip_allow')} <span class="opt">${t('common.optional')}</span></span><textarea aria-label="${t('cm.ips')}" class="textarea mono" rows="2" data-m="ips" placeholder="203.0.113.10, 203.0.113.0/28" spellcheck="false" translate="no" aria-invalid="${d.errs.ips ? 'true' : 'false'}">${d.ips}</textarea>
+      ${d.errs.ips ? h`<span class="field-err">${d.errs.ips}</span>` : h`<span class="hint-xs">${t('cm.ipsHint')}</span>`}</label>
+    <label class="field"><span class="label">${t('cm.expiry')}</span><select class="select" data-m="expiry">${['never', '90d', '1y'].map((x) => h`<option value="${x}" ${raw(d.expiry === x ? 'selected' : '')}>${t(`cm.exp.${x}`)}</option>`)}</select></label>
+    <p class="hint-xs">${icon('info', 'ico-xs')} ${t('cm.once')}</p></div>`;
+  const read = (hd) => {
+    const q = (k) => hd.el.querySelector(`[data-m="${k}"]`);
+    d.name = q('name').value.trim().toLowerCase();
+    d.scopes = [...hd.el.querySelectorAll('[data-m="scope"]:checked')].map((x) => x.value);
+    if (q('sub')) d.sub = q('sub').value;
+    d.ips = q('ips').value;
+    d.expiry = q('expiry').value;
+  };
+  const m = ctx.ui.modal({
+    title: t('cm.title'), size: 'md', body: body(),
+    actions: {
+      'ky.cm.env': (el, ev, hd) => { read(hd); d.env = el.dataset.value; hd.setBody(body()); const b = hd.el.querySelector(`[data-action="ky.cm.env"][data-value="${d.env}"]`); if (b) b.focus(); },
+    },
+    buttons: [
+      { label: t('common.cancel') },
+      { label: t('cm.create'), kind: 'primary', icon: 'key', onClick: (hd) => {
+        read(hd);
+        d.errs = {};
+        if (!KEY_RE.test(d.name)) d.errs.name = t('cm.nameErr');
+        else if (ctx.list('apiKeys').some((k) => k.name === d.name && k.status === 'active')) d.errs.name = t('cm.nameTaken');
+        if (!d.scopes.length) d.errs.scopes = t('cm.scopesErr');
+        const ips = d.ips.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+        if (ips.some((ip) => !IP_RE.test(ip))) d.errs.ips = t('cm.ipsErr');
+        if (Object.keys(d.errs).length) { hd.setBody(body()); const e = hd.el.querySelector('[aria-invalid="true"]'); if (e) e.focus(); return false; }
+        createKey(ctx, { ...d, ips });
+        return true;
+      } },
+    ],
+  });
+  return m;
+}
+
+function createKey(ctx, d) {
+  const { t } = ctx;
+  ctx.state.creating = true;
+  ctx.state.shown = null;
+  ctx.rerender();
+  soon(ctx, (s) => {
+    const live = d.env === 'live';
+    const rec = { id: newId('key'), name: d.name, prefix: live ? 'ak_live_' : 'ak_test_', last4: live ? '0002' : '0001', env: live ? 'live' : 'sandbox', scopes: d.scopes, sub: d.sub || null, allowedIps: d.ips, createdAt: new Date(nowMs()).toISOString().slice(0, 10), createdBy: ctx.store.get('user.name'), lastUsed: null, status: 'active', expiry: d.expiry };
+    ctx.store.push('apiKeys', rec, { prepend: true });
+    audit('key.created', { name: rec.name, env: rec.env }, rec.id);
+    setStep('connect', 'done');
+    s.creating = false;
+    s.shown = { keyId: rec.id, value: live ? DEMO_KEY_LIVE : DEMO_KEY_SANDBOX, kind: 'create', saved: false };
+    s.fresh = rec.id;
+    ctx.ui.toast(t('toast.T07', { name: rec.name }), { kind: 'success' });
+    redraw(ctx);
+  }, 600);
+}
+
+async function rotateKey(ctx, k) {
+  const { t, fmt } = ctx;
+  const until = nowMs() + 86400000;
+  const ok = await ctx.ui.confirm({
+    title: t('rot.title', { name: k.name }), body: t('rot.body'),
+    consequences: [t('rot.c1'), t('rot.c2', { until: fmt.dateTime(until) }), t('rot.c3')],
+    confirmLabel: t('rot.yes'), cancelLabel: t('rot.no'), danger: true, typed: k.name,
+  });
+  if (!ok) return;
+  ctx.state.seq += 1;
+  const n = String(ctx.state.seq).padStart(4, '0');
+  ctx.store.update('apiKeys', (list) => list.map((x) => (x.id === k.id ? { ...x, oldLast4: x.last4, last4: n, oldUntil: new Date(until).toISOString() } : x)));
+  audit('key.rotated', { name: k.name }, k.id);
+  ctx.state.shown = { keyId: k.id, value: `${k.prefix}DEMO_${n}_not_a_real_key`, kind: 'rotate', saved: false };
+  ctx.state.fresh = k.id;
+  ctx.ui.toast(t('toast.T09', { name: k.name }), { kind: 'success' });
+}
+
+async function revokeKey(ctx, k) {
+  const { t, fmt } = ctx;
+  const ok = await ctx.ui.confirm({
+    title: t('rev.title', { name: k.name }), body: t('rev.body'),
+    consequences: [t('rev.c1'), t('rev.c2', { sub: ctx.ui.describe.sub(k.sub), used: k.lastUsed ? fmt.relative(k.lastUsed) : t('used.never') }), t('rev.c3')],
+    confirmLabel: t('rev.yes'), cancelLabel: t('rev.no'), danger: true, typed: k.name,
+  });
+  if (!ok) return;
+  ctx.store.update('apiKeys', (list) => list.map((x) => (x.id === k.id ? { ...x, status: 'revoked', revokedAt: new Date(nowMs()).toISOString(), oldUntil: null } : x)));
+  if (ctx.state.shown && ctx.state.shown.keyId === k.id) ctx.state.shown = null;
+  audit('key.revoked', { name: k.name }, k.id);
+  ctx.ui.toast(t('toast.T08', { name: k.name }), { kind: 'success' });
+}
+
+function webhookModal(ctx, wh = null) {
+  const { t, html: h, icon } = ctx;
+  const subs = ctx.list('subAccounts');
+  const d = { url: wh ? wh.url : 'https://', events: wh ? wh.events.slice() : ['call.completed'], sub: subs[0] ? subs[0].id : '', err: null, evErr: null };
+  let created = null;
+  const form = () => h`<div class="stack-3">
+    <label class="field"><span class="label">${t('wm.url')}</span><input class="input mono" data-m="url" value="${d.url}" inputmode="url" spellcheck="false" translate="no" autocomplete="off" aria-invalid="${d.err ? 'true' : 'false'}" aria-describedby="ky-wm-h">
+      ${d.err ? h`<span class="field-err" id="ky-wm-h">${d.err}</span>` : h`<span class="hint-xs" id="ky-wm-h">${t('wm.urlHint')}</span>`}</label>
+    <fieldset class="ky-fs"><legend class="label">${t('wm.events')}</legend><div class="ky-checks">${EVENTS.map((e) => h`<label class="check"><input type="checkbox" data-m="ev" value="${e}" ${raw(d.events.includes(e) ? 'checked' : '')}><code class="mono">${e}</code><span class="hint-xs">${t(`wev.${e.replace(/[.*]/g, (c) => (c === '.' ? '_' : 'all'))}`)}</span></label>`)}</div>
+      ${d.evErr ? h`<span class="field-err">${d.evErr}</span>` : ''}</fieldset>
+    ${!wh && subs.length > 1 ? h`<label class="field"><span class="label">${t('cm.sub')}</span><select class="select" data-m="sub">${subs.map((x) => h`<option value="${x.id}">${ctx.loc(x.name)}</option>`)}</select></label>` : ''}
+    <p class="hint-xs">${t('wm.retry', { schedule: RETRY.map((x) => `${x} s`).join(' · ') })}</p></div>`;
+  const secretView = (w) => h`<div class="stack-3"><div class="note note-ok">${icon('check-circle')}<span>${t('wm.added', { host: hostOf(w.url) })}</span></div>
+    <span class="label">${ctx.term(t('wh.secret'), 'signing_secret')}</span>
+    <div class="input-group"><code class="code-inline mono grow" translate="no">${secretOf(w)}</code><button type="button" class="btn btn-sm" data-action="wh.secret.copy">${icon('copy', 'ico-sm')}${t('common.copy')}</button></div>
+    <span class="hint-xs">${t('wm.secretOnce')}</span></div>`;
+  const m = ctx.ui.modal({
+    title: wh ? t('wm.editTitle', { host: hostOf(wh.url) }) : t('wm.addTitle'), size: 'md', body: form(),
+    actions: {
+      'wh.secret.copy': (el) => { if (created) ctx.ui.copy(secretOf(created), el); },
+    },
+    buttons: [
+      { label: t('common.cancel') },
+      { label: wh ? t('wm.save') : t('wm.add'), kind: 'navy', icon: wh ? 'check' : 'plus', onClick: (hd) => {
+        if (created) return true;
+        d.url = hd.el.querySelector('[data-m="url"]').value.trim();
+        d.events = [...hd.el.querySelectorAll('[data-m="ev"]:checked')].map((x) => x.value);
+        const sub = hd.el.querySelector('[data-m="sub"]');
+        if (sub) d.sub = sub.value;
+        d.err = URL_RE.test(d.url) ? null : t('wm.urlErr');
+        d.evErr = d.events.length ? null : t('wm.evErr');
+        if (d.err || d.evErr) { hd.setBody(form()); const e = hd.el.querySelector('[aria-invalid="true"]'); if (e) e.focus(); return false; }
+        if (wh) {
+          ctx.store.update('webhooks', (list) => list.map((x) => (x.id === wh.id ? { ...x, url: d.url, events: d.events } : x)));
+          audit('webhook.updated', { host: hostOf(d.url) }, wh.id);
+          ctx.ui.toast(t('toast.T02'), { kind: 'success', sub: hostOf(d.url) });
+          return true;
+        }
+        ctx.state.seq += 1;
+        created = { id: newId('wh'), url: d.url, events: d.events, sub: d.sub, secretLast4: `${String(ctx.state.seq).padStart(2, '0')}d${ctx.state.seq % 10}`, status: 'active', failuresInRow: 0, lastDelivery: null };
+        ctx.store.push('webhooks', created);
+        audit('webhook.added', { host: hostOf(d.url) }, created.id);
+        hd.setBody(secretView(created));
+        hd.setButtons([{ label: t('wm.saved'), kind: 'navy', icon: 'check' }]);
+        return false;
+      } },
+    ],
+  });
+  return m;
+}
+
+function payloadModal(ctx, ev) {
+  const { t, html: h, icon, fmt } = ctx;
+  const payload = JSON.stringify(payloadOf(ctx, ev), null, 2);
+  const ts = Math.floor(new Date(ev.at).getTime() / 1000);
+  const attempts = Array.from({ length: Math.min(ev.attempts, 6) }, (_, i) => ({ n: i + 1, at: new Date(new Date(ev.at).getTime() + RETRY.slice(0, i).reduce((a, b) => a + b, 0) * 1000), ok: ev.status === 'delivered' && i === ev.attempts - 1 }));
+  const respBody = ev.status === 'delivered' ? '{"ok":true}' : ev.code === 503 ? '<html><body>503 Service Unavailable</body></html>' : '';
+  ctx.ui.modal({
+    title: t('insp.title', { id: ev.id }), size: 'lg',
+    body: h`<div class="stack-3">
+      <div class="row"><span class="chip ${ev.status === 'delivered' ? 'chip-ok' : ev.status === 'retrying' ? 'chip-warn' : 'chip-err'}">${ev.code ? `${ev.code} · ` : ''}${t(`ev.st.${ev.status}`)}</span><span class="hint-xs">${fmt.dateTime(ev.at)} · ${t('ev.attemptsN', { count: ev.attempts, n: ev.attempts })}${ev.reason ? ` · ${reasonText(ev.reason, t)}` : ''}</span></div>
+      <span class="label">${t('insp.request')}</span>
+      <pre class="code ky-pre" translate="no">POST ${ev.url}
+Content-Type: application/json
+User-Agent: ANTS-Webhooks/1.0
+X-ANTS-Event-Id: ${ev.id}
+X-ANTS-Timestamp: ${ts}
+X-ANTS-Signature: v1=${'0'.repeat(8)}demo${'0'.repeat(8)}signature</pre>
+      <span class="label">${t('insp.payload')}</span><pre class="code ky-pre" translate="no">${payload}</pre>
+      <span class="label">${t('insp.response')}</span><pre class="code ky-pre" translate="no">${ev.code ? `HTTP ${ev.code} · ${fmt.int(ev.ms)} ms\n${respBody}` : t('insp.noResponse', { ms: fmt.int(ev.ms) })}</pre>
+      <span class="label">${t('insp.attempts')}</span>
+      <ol class="timeline">${attempts.map((a) => h`<li><span class="tdot ${a.ok ? '' : ev.status === 'delivered' ? '' : 'err'}">${icon(a.ok || ev.status === 'delivered' ? 'check' : 'x')}</span><span>${t('insp.attempt', { n: a.n })} ${a.ok ? h`<code>${ev.code}</code>` : ev.status === 'delivered' ? '' : h`<code>${ev.code || 'timeout'}</code>`}</span><time>${fmt.time(a.at)}</time></li>`)}</ol>
+      <p class="hint-xs">${t('insp.note')}</p></div>`,
+    buttons: [
+      { label: t('insp.copy'), icon: 'copy', onClick: (hd, btn) => { ctx.ui.copy(payload, btn); return false; } },
+      ...(ev.status !== 'delivered' ? [{ label: t('fail.resend'), icon: 'send', onClick: () => { resendOne(ctx, ev.id); return true; } }] : []),
+      { label: t('common.close'), kind: 'navy' },
+    ],
+  });
+}
+
+// ---------- behaviour ----------
+function runTest(ctx, whId) {
+  const { t } = ctx;
+  const s = ctx.state;
+  const wh = ctx.list('webhooks').find((x) => x.id === whId);
+  if (!wh || (s.tests[whId] && s.tests[whId].step < 3)) return;
+  const crm = wh.url.includes('crm.example.com');
+  const dead = wh.status === 'off' && wh.failuresInRow >= 100;
+  const res = dead ? { code: null, ms: 5000, ok: false } : crm ? { code: 503, ms: 1204, ok: false } : { code: 200, ms: 182, ok: true };
+  s.tests[whId] = { step: 0, ...res };
+  ctx.rerender();
+  soon(ctx, (st) => { if (st.tests[whId]) { st.tests[whId].step = 1; redraw(ctx); } }, 350);
+  soon(ctx, (st) => { if (st.tests[whId]) { st.tests[whId].step = 2; redraw(ctx); } }, 800);
+  soon(ctx, (st) => {
+    const tt = st.tests[whId];
+    if (!tt) return;
+    tt.step = 3;
+    const at = new Date(nowMs()).toISOString();
+    const ev = { id: newId('evt'), at, event: 'call.completed', url: wh.url, code: res.code, ms: res.ms, status: res.ok ? 'delivered' : 'failed', attempts: 1, test: true, data: { call_id: 'call_01JBTEST0001', status: 'completed', sip_code: 200, talk_seconds: 18, price: PRICES.outbound, price_unit: 'credits', test: true } };
+    tt.ev = ev;
+    st.sent = [ev, ...st.sent];
+    st.freshEv = ev.id;
+    ctx.store.update('webhooks', (list) => list.map((x) => (x.id === whId ? { ...x, lastDelivery: res.code ? { at, code: res.code, ms: res.ms } : { at, code: null, timeout: true } } : x)));
+    if (res.ok) ctx.ui.toast(t('toast.T10', { code: res.code, ms: res.ms }), { kind: 'success' });
+    else ctx.ui.toast(res.code ? t('wt.failToast', { code: res.code, host: hostOf(wh.url) }) : t('wt.timeoutToast', { host: hostOf(wh.url) }), { kind: 'warn', demo: true });
+    redraw(ctx);
+  }, dead ? 1900 : crm ? 2100 : 1250);
+}
+
+function resendOne(ctx, evId, then) {
+  const { t } = ctx;
+  const s = ctx.state;
+  if (s.resending[evId]) return;
+  s.resending[evId] = true;
+  ctx.rerender();
+  soon(ctx, (st) => {
+    delete st.resending[evId];
+    ctx.store.update('failedEvents', (list) => list.filter((e) => e.id !== evId));
+    ctx.store.update('keyTiles', (k) => (k ? { ...k, failedDeliveries: Math.max(0, (k.failedDeliveries || 0) - 1) } : k));
+    const at = new Date(nowMs()).toISOString();
+    st.sent = [{ id: evId, at, event: 'call.completed', url: 'https://crm.example.com/ants/webhook', code: 200, ms: 190, status: 'delivered', attempts: 7, data: { resent: true } }, ...st.sent];
+    if (!then) ctx.ui.toast(t('toast.T11'), { kind: 'success' });
+    if (then) then(); else redraw(ctx);
+  }, 700);
+}
+
+function resendAll(ctx) {
+  const { t } = ctx;
+  const ids = ctx.list('failedEvents').map((e) => e.id);
+  if (!ids.length || Object.keys(ctx.state.resending).length) return;
+  const next = (i) => {
+    if (i >= ids.length) { ctx.ui.toast(t('fail.allDone', { n: ids.length }), { kind: 'success', sub: t('toast.T11') }); redraw(ctx); return; }
+    resendOne(ctx, ids[i], () => { redraw(ctx); next(i + 1); });
+  };
+  next(0);
+}
+
+async function rotateSecret(ctx, wh) {
+  const { t, html: h, icon } = ctx;
+  const host = hostOf(wh.url);
+  const ok = await ctx.ui.confirm({
+    title: t('rs.title', { host }), body: t('rs.body'),
+    consequences: [t('rs.c1'), t('rs.c2'), t('rs.c3')],
+    confirmLabel: t('rs.yes'), cancelLabel: t('rs.no'), danger: true, typed: host,
+  });
+  if (!ok) return;
+  ctx.state.seq += 1;
+  const last4 = `${String(ctx.state.seq).padStart(2, '0')}e${ctx.state.seq % 10}`;
+  const next = { ...wh, secretLast4: last4 };
+  ctx.store.update('webhooks', (list) => list.map((x) => (x.id === wh.id ? { ...x, secretLast4: last4, oldSecretUntil: new Date(nowMs() + 86400000).toISOString() } : x)));
+  audit('webhook.secret.rotated', { host }, wh.id);
+  ctx.ui.modal({
+    title: t('rs.newTitle', { host }), size: 'md',
+    body: h`<div class="stack-3"><div class="input-group"><code class="code-inline mono grow" translate="no">${secretOf(next)}</code><button type="button" class="btn btn-sm" data-action="wh.secret.copy">${icon('copy', 'ico-sm')}${t('common.copy')}</button></div>
+      <p class="hint-xs">${t('rs.newHint', { until: ctx.fmt.dateTime(nowMs() + 86400000) })}</p></div>`,
+    actions: { 'wh.secret.copy': (el) => ctx.ui.copy(secretOf(next), el) },
+    buttons: [{ label: t('wm.saved'), kind: 'navy', icon: 'check' }],
+  });
+}
+
+async function verify(ctx) {
+  const v = ctx.state.verify;
+  const wh = ctx.list('webhooks').find((x) => x.id === v.wh) || ctx.list('webhooks')[0];
+  if (!wh) return;
+  v.busy = true;
+  ctx.rerender();
+  const expected = `v1=${await hmacHex(secretOf(wh), `${v.ts}.${v.payload}`)}`;
+  const age = Math.abs(Math.floor(nowMs() / 1000) - Number(v.ts || 0));
+  soon(ctx, (s) => {
+    s.verify.busy = false;
+    s.verify.result = s.verify.sig.trim() !== expected ? 'bad' : age > 300 ? 'old' : 'ok';
+    redraw(ctx);
+  }, 400);
+}
+
+async function prefillVerify(ctx, root) {
+  const v = ctx.state.verify;
+  const wh = ctx.list('webhooks').find((x) => x.id === v.wh) || ctx.list('webhooks')[0];
+  if (!wh) return;
+  if (!v.wh) v.wh = wh.id;
+  if (!v.ts) v.ts = String(Math.floor(nowMs() / 1000));
+  if (v.payload == null) v.payload = samplePayload(ctx);
+  if (!v.sig) {
+    v.sig = `v1=${await hmacHex(secretOf(wh), `${v.ts}.${v.payload}`)}`;
+    const i = root.querySelector('[data-field="vSig"]');
+    if (i && !i.value) i.value = v.sig;
+    const ts = root.querySelector('[data-field="vTs"]');
+    if (ts && !ts.value) ts.value = v.ts;
+    const b = root.querySelector('[data-field="vBody"]');
+    if (b && !b.value) b.value = v.payload;
+    const pre = root.querySelector('.ky-sigcode');
+    if (pre) pre.textContent = pre.textContent.replace('…', v.ts);
+  }
+}
+
+export function mount(root, ctx) {
+  const { t } = ctx;
+  const s = ctx.state;
+  const tab = tabOf(ctx.params);
+  const key = (idv) => ctx.list('apiKeys').find((k) => k.id === idv);
+
+  ctx.actions(root, {
+    'ky.connect': noop, 'ky.tab': noop, 'ky.tile.delivery': noop,
+    // Already on Webhooks: the tile scrolls to the failed list instead of reloading the tab it is on.
+    'ky.tile.failed': (el, ev) => { if (tab === 'webhooks') { ev.preventDefault(); toFailed(root); } }, 'ky.empty.connect': noop, 'wh.events': noop, 'ev.empty.webhooks': noop,
+    'wh.verify.help': noop, 'wh.verify.wh': noop, 'wh.verify.ts': noop, 'wh.verify.body': noop, 'wh.verify.sig': noop, 'wh.ev.search': noop, 'wh.ev.status': noop,
+    'ky.create': () => createKeyModal(ctx),
+    'ky.empty.create': () => createKeyModal(ctx),
+    'ky.env': (el) => ctx.setState({ env: el.dataset.value }),
+    'ky.clear': () => ctx.setState({ env: 'all', showRevoked: true }),
+    'ky.banner.copy': (el) => { if (s.shown) ctx.ui.copy(s.shown.value, el); },
+    'ky.banner.saved': () => { if (s.shown) { s.shown.saved = true; ctx.guard(null); ctx.rerender(); } },
+    'ky.menu': (el) => {
+      const k = key(el.dataset.value);
+      if (!k) return;
+      ctx.ui.menu(el, [
+        { id: 'ky.rotate', label: t('menu.rotate'), icon: 'refresh', onSelect: () => rotateKey(ctx, k) },
+        { id: 'ky.copyid', label: t('menu.copyId'), icon: 'copy', onSelect: () => ctx.ui.copy(k.id) },
+        { sep: true },
+        { id: 'ky.revoke', label: t('menu.revoke'), icon: 'x-circle', danger: true, onSelect: () => revokeKey(ctx, k) },
+      ], { label: t('menuFor', { name: k.name }) });
+    },
+    'ky.revoked.hide': (el) => {
+      const idv = el.dataset.value;
+      const was = s.hidden.includes(idv);
+      s.hidden = was ? s.hidden.filter((x) => x !== idv) : [...s.hidden, idv];
+      if (!was) s.showRevoked = false;
+      ctx.rerender();
+      if (!was) ctx.ui.toast(t('hidden', { name: (key(idv) || {}).name || '' }), { kind: 'info', timeout: 10000, action: { label: t('common.undo'), onClick: () => { ctx.state.hidden = ctx.state.hidden.filter((x) => x !== idv); redraw(ctx); } } });
+    },
+    'ky.revoked.show': () => ctx.setState({ showRevoked: !s.showRevoked }),
+    // webhooks
+    'wh.add': () => webhookModal(ctx),
+    'wh.empty.add': () => webhookModal(ctx),
+    'wh.edit': (el) => { const w = ctx.list('webhooks').find((x) => x.id === el.dataset.value); if (w) webhookModal(ctx, w); },
+    'wh.test': (el) => runTest(ctx, el.dataset.value),
+    'wh.test.view': (el) => { const tt = s.tests[el.dataset.value]; const w = ctx.list('webhooks').find((x) => x.id === el.dataset.value); if (tt && tt.ev && w) payloadModal(ctx, tt.ev); },
+    'wh.toggle': (el) => {
+      const w = ctx.list('webhooks').find((x) => x.id === el.dataset.value);
+      if (!w) return;
+      const turningOff = w.status !== 'off';
+      ctx.store.update('webhooks', (list) => list.map((x) => (x.id === w.id ? { ...x, status: turningOff ? 'off' : 'active', failuresInRow: turningOff ? x.failuresInRow : 0 } : x)));
+      audit(turningOff ? 'webhook.disabled' : 'webhook.enabled', { host: hostOf(w.url) }, w.id);
+      ctx.ui.toast(t(turningOff ? 'toast.T29off' : 'toast.T29', { name: hostOf(w.url) }), { kind: 'success' });
+    },
+    'wh.rotate': (el) => { const w = ctx.list('webhooks').find((x) => x.id === el.dataset.value); if (w) rotateSecret(ctx, w); },
+    'wh.fail.resend': (el) => resendOne(ctx, el.dataset.value),
+    'wh.fail.resendall': () => resendAll(ctx),
+    'wh.fail.view': (el) => { const ev = eventsList(ctx).find((e) => e.id === el.dataset.value); if (ev) payloadModal(ctx, ev); },
+    'wh.verify': () => verify(ctx),
+    'wh.verify.reset': () => { s.verify = { wh: s.verify.wh, ts: null, payload: null, sig: '', result: null, busy: false }; ctx.rerender(); },
+    // events
+    'wh.ev.row': (el) => { const ev = eventsList(ctx).find((e) => e.id === el.dataset.value); if (ev) payloadModal(ctx, ev); },
+    'wh.ev.clear': () => { ctx.setState({ evQ: '', evStatus: 'all' }); if (ctx.params.query.host) ctx.go('keys?tab=events', { replace: true }); },
+    'wh.ev.host': () => ctx.go('keys?tab=events', { replace: true }),
+  });
+
+  ctx.inputs(root, {
+    evQ: (v) => ctx.setState({ evQ: v }),
+    evStatus: (v) => ctx.setState({ evStatus: v }),
+    vWh: async (v) => { s.verify.wh = v; s.verify.sig = ''; s.verify.result = null; const w = ctx.list('webhooks').find((x) => x.id === v); if (w) s.verify.sig = `v1=${await hmacHex(secretOf(w), `${s.verify.ts}.${s.verify.payload}`)}`; redraw(ctx); },
+    vTs: (v) => { s.verify.ts = v.trim(); s.verify.result = null; },
+    vBody: (v) => { s.verify.payload = v; s.verify.result = null; },
+    vSig: (v) => { s.verify.sig = v; s.verify.result = null; },
+  });
+
+  ctx.watch('apiKeys', 'webhooks', 'failedEvents', 'keyTiles', 'calls', 'mode', 'env', 'subAccounts');
+
+  // A key shown once and not saved yet: ask before leaving.
+  if (s.shown && !s.shown.saved) {
+    ctx.guard(async () => {
+      const ok = await ctx.ui.confirm({ title: t('leave.title'), body: t('leave.body'), confirmLabel: t('leave.yes'), cancelLabel: t('leave.stay') });
+      if (ok && ctx.state.shown) ctx.state.shown.saved = true;
+      return ok;
+    });
+  }
+  if (tab === 'webhooks') prefillVerify(ctx, root);
+  if (tab === 'webhooks' && ctx.params.query.focus === 'failed') ctx.later(() => toFailed(root), 60);
+}
+
+function toFailed(root) {
+  const card = root.querySelector('.ky-failed');
+  if (!card) return;
+  card.setAttribute('tabindex', '-1');
+  card.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
+  card.focus({ preventScroll: true });
+  card.classList.remove('ky-flash'); void card.offsetWidth; card.classList.add('ky-flash');
+}

@@ -1,0 +1,128 @@
+/* ANTS Voice demo — design tokens.
+   CONTRACT: screens use these variables only (no hard-coded colours, radii, durations).
+   Spacing follows an 8-px grid (--s-1 = 4px is the only half step). */
+:root {
+  /* brand */
+  --navy: #14274A;
+  --navy-700: #0E1C37;
+  --navy-50: #EEF2F8;
+  --orange: #F26322;
+  --orange-d: #D44E12;
+  --orange-50: #FFF4EE;
+  --orange-100: #FFE4D6;
+  --orange-700: #8A3A10;
+  /* Text-on-orange needs >= 4.5:1, so filled buttons use the darker accent fill (white on #C94A12 = 4.70:1).
+     #F26322 stays for non-text accents: dots, rings, progress, focus ring (3.19:1 passes the 3:1 non-text rule). */
+  --accent-fill: #C94A12;
+  --accent-fill-hover: #B5410F;
+  --accent-fill-press: #A23A0D;
+
+  /* surfaces + text */
+  --page: #F6F8FC;
+  --card: #FFFFFF;
+  --sunken: #F8FAFC;
+  --hover: #F3F6FB;
+  --border: #E7ECF4;
+  --border-strong: #D5DDEA;
+  --text: #1B2B4D;
+  --text-2: #3D4B66;
+  --slate: #5B6781;
+  --muted: #66728C;   /* 4.8:1 on white: it is also used for text (unspoken caption words), so it must pass 4.5:1 */
+
+  /* status */
+  --green: #1FA971;
+  --green-50: #E6F6EE;
+  --green-700: #14663F;
+  --green-fill: #13804F;   /* white text 4.9:1 */
+  --red: #E5484D;
+  --red-50: #FDECEC;
+  --red-700: #A3262B;
+  --red-fill: #C62F35;     /* white text 5.3:1 */
+  --amber: #E8941A;
+  --amber-50: #FFF6E5;
+  --amber-200: #F3D9A4;
+  --amber-700: #8A4B00;
+  --blue: #2F6FEB;
+  --blue-50: #EAF1FE;
+  --blue-700: #1D4DB3;
+
+  /* spacing (8-px grid) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+
+  /* radius */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* elevation */
+  --shadow-1: 0 1px 2px rgba(20, 39, 74, .05);
+  --shadow-2: 0 4px 16px rgba(20, 39, 74, .08), 0 1px 3px rgba(20, 39, 74, .06);
+  --shadow-3: 0 16px 48px rgba(14, 28, 55, .18), 0 2px 8px rgba(14, 28, 55, .08);
+  --focus: 0 0 0 3px rgba(242, 99, 34, .28);
+
+  /* motion — productive curves for task screens; nothing ever blocks input.
+     Entering elements use --ease-enter, leaving --ease-exit, moving --ease-standard.
+     --ease-expressive is reserved for 3 moments: call connected, campaign launched, top-up succeeded. */
+  --dur-press: 70ms;
+  --dur-fast: 150ms;
+  --dur: 180ms;            /* = --dur-base */
+  --dur-base: 180ms;
+  --dur-panel: 240ms;
+  --dur-slow: 400ms;       /* spotlight glide, progress fills, count-ups only */
+  --ease-standard: cubic-bezier(.2, 0, .38, .9);
+  --ease-enter: cubic-bezier(0, 0, .38, .9);
+  --ease-exit: cubic-bezier(.2, 0, 1, .9);
+  --ease-expressive: cubic-bezier(.4, .14, .3, 1);
+  --ease-out: var(--ease-enter);
+  --ease-in-out: var(--ease-standard);
+
+  /* type */
+  --font-latin: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font: var(--font-latin);
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+  --fs-xs: 12px;   /* minimum size for secondary text */
+  --fs-sm: 13px;
+  --fs: 14px;
+  --fs-md: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+  --lh: 1.5;
+  --lh-tight: 1.3;
+  --tracking-caps: .06em;
+
+  /* layout */
+  --sidebar-w: 256px;
+  --topbar-h: 60px;
+  --content-max: 1360px;
+  --z-sidebar: 30;
+  --z-topbar: 40;
+  --z-layer: 100;
+  --z-toast: 300;
+  --z-tooltip: 400;
+}
+
+/* Language-specific type. Thai needs line-height >= 1.5; CJK and Thai never get uppercase tracking. */
+/* Inter first in every language: Thai and Han glyphs fall through to their own fonts, digits stay Inter. */
+html[lang="th"] {
+  --font: 'Inter', 'Noto Sans Thai', ui-sans-serif, system-ui, sans-serif;
+  --lh: 1.6;
+  --lh-tight: 1.45;      /* single-line UI and headings: tone marks must not clip */
+  --fs-xs: 13px;          /* Thai minimum size: tone marks become unreadable at 12 px */
+  --tracking-caps: 0;
+}
+html[lang="zh-Hans"] {
+  --font: 'Inter', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', ui-sans-serif, system-ui, sans-serif;
+  --lh: 1.7;
+  --lh-tight: 1.45;
+  --tracking-caps: 0;
+}

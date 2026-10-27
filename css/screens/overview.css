@@ -1,0 +1,70 @@
+/* Overview — screen-owned styles (prefix ov-). Loaded because js/screens/overview.js exports css = true. */
+
+.ov .page-head .tools { justify-content: flex-end; }
+.ov-status { text-decoration: none; }
+.ov-status:hover { filter: brightness(.97); }
+.ov-sub { width: auto; min-width: 150px; }
+
+/* Checklist "First call in 10 minutes" */
+.ov-chk .card-head { align-items: flex-start; }
+.ov-chk .progress i.scale { width: 100%; transform-origin: left center; transition: transform var(--dur-slow) var(--ease-standard); }
+.ov-rows { list-style: none; margin: 0; padding: 0; }
+.ov-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: var(--s-3); align-items: center; padding: 14px var(--s-4); border-bottom: 1px solid var(--border); }
+.ov-row:last-child { border-bottom: 0; }
+.ov-circ { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: var(--fs-xs); border: 1.5px solid var(--border-strong); color: var(--slate); background: #fff; }
+.ov-circ.done { background: var(--navy); border-color: var(--navy); color: #fff; }
+.ov-circ.done svg { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.ov-circ.progress { border-color: var(--amber); color: var(--amber-700); background: var(--amber-50); }
+.ov-row-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ov-row-t { font-size: var(--fs); }
+.ov-row-s { font-size: var(--fs-sm); color: var(--slate); }
+.ov-row-s.done { color: var(--green-700); }
+.ov-row-s.progress { color: var(--amber-700); }
+.ov-row-a { display: flex; gap: 6px; justify-content: flex-end; }
+.ov-chk-slim { display: flex; align-items: center; gap: var(--s-3); padding: 12px var(--s-4); width: 100%; text-align: left; border: 1px solid var(--border); cursor: pointer; }
+.ov-chk-slim:hover { background: var(--hover); }
+.ov-chk-slim .hint { margin-left: auto; }
+
+.ov-live-card { position: relative; overflow: hidden; border-color: var(--green); background: linear-gradient(90deg, var(--green-50), #fff 60%); }
+.ov-live-in { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-4) var(--s-5); flex-wrap: wrap; }
+.ov-live-ico { color: var(--green-700); }
+
+/* Tiles + strip */
+.tile-link { color: inherit; text-decoration: none; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+.tile-link:hover { border-color: var(--border-strong); box-shadow: var(--shadow-2); }
+.ov-strip { display: flex; align-items: center; gap: var(--s-3); padding: 14px var(--s-4); color: var(--slate); background: var(--sunken); border-style: dashed; flex-wrap: wrap; }
+.ov-strip-ico { color: var(--muted); }
+
+/* Chart */
+.ov-chart-empty { position: absolute; inset: 0; display: grid; place-items: center; }
+.ov-chart-msg { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; background: rgba(255, 255, 255, .92); padding: var(--s-4); border-radius: var(--r); max-width: 320px; }
+
+/* Not connected */
+.ov-nc-row { display: block; color: inherit; text-decoration: none; font-size: var(--fs-sm); border-radius: var(--r-sm); padding: 4px 6px; margin: -4px -6px; }
+.ov-nc-row:hover { background: var(--hover); }
+.ov-nc-row .hint-xs { display: block; margin-top: 3px; }
+
+.ov-big { font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -.02em; }
+.ov-alert { align-items: center; flex-wrap: wrap; }
+.ov-alert > .grow { flex: 1 1 320px; min-width: 0; }
+.ov-alert .row { flex-wrap: wrap; }
+@media (max-width: 767px) { .ov-alert > .row { flex-basis: 100%; } }
+.ov-livecalls .tbl td { white-space: nowrap; }
+.ov-livecalls .tbl td.ov-live-src { white-space: normal; min-width: 150px; } /* the source may wrap, so the hang-up button stays in view */
+.ov-livecalls .tbl td.ov-live-src .hint-xs { white-space: nowrap; }
+
+@media (max-width: 1279px) {
+  .ov-tiles.g-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1023px) {
+  .ov .g-3 { grid-template-columns: minmax(0, 1fr); }
+  .ov .g-3 > .span-2 { grid-column: auto; }
+}
+@media (max-width: 767px) {
+  .ov-tiles.g-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-tiles.g-5 > :first-child { grid-column: 1 / -1; }
+  .ov-row { grid-template-columns: 28px minmax(0, 1fr); }
+  .ov-row-a { grid-column: 2; justify-content: flex-start; }
+  .ov .page-head .tools { justify-content: flex-start; }
+  .ov-chk .progress { width: 96px !important; }
+}

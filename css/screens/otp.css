@@ -1,0 +1,126 @@
+/* OTP & notifications — screen-owned styles (prefix ot-). Loaded because js/screens/otp.js exports css = true. */
+
+.ot-price { align-items: center; flex-wrap: wrap; }
+.ot-first { align-items: center; }
+.tile-link { color: inherit; text-decoration: none; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+.tile-link:hover { border-color: var(--border-strong); box-shadow: var(--shadow-2); }
+.ot-tiles .tile { min-height: 116px; }
+
+/* chart + funnel */
+.ot-chart .card-head .row-tight { flex-wrap: wrap; }
+.ot-sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-left: 6px; vertical-align: -1px; }
+.ot-chart svg rect { transition: opacity var(--dur-fast) var(--ease-out); }
+.ot-chart svg rect:hover { opacity: .8; }
+.ot-fbar { display: block; height: 10px; margin-top: 6px; border-radius: 5px; }
+.ot-fbar > i { border-radius: 5px; }
+
+/* API console */
+.ot-mid { align-items: start; }
+.ot-console .card-head h2 { display: flex; align-items: center; gap: 8px; margin-right: 0; }
+.ot-console .card-head .hint-xs { margin-right: auto; }
+.ot-con-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: var(--s-4); align-items: start; }
+.ot-req-head { flex-wrap: wrap; row-gap: 6px; }
+.ot-req-head .label { flex: 1 1 auto; min-width: 0; }
+.ot-req-head code { font-size: 11.5px; white-space: nowrap; }
+.ot-body { min-height: 156px; font-size: 12.5px; line-height: 1.6; background: var(--navy); color: #E6ECF7; border-color: var(--navy); tab-size: 2; white-space: pre; overflow: auto; }
+.ot-body:focus { border-color: var(--orange); }
+.ot-body[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 3px rgba(229,72,77,.2); }
+.ot-cost { margin: 0; }
+.ot-run-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-4); border-top: 1px solid var(--border); background: var(--sunken); border-radius: 0 0 var(--r-lg) var(--r-lg); align-items: start; }
+.ot-run { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 72px; }
+.ot-idle { margin: 0; }
+.ot-resp { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: var(--r-sm); border: 1px solid var(--border); background: #fff; font-size: var(--fs-xs); min-width: 0; }
+.ot-resp code { overflow-wrap: anywhere; word-break: break-word; min-width: 0; color: var(--text-2); }
+.ot-resp.is-ok { border-color: #BFE7D3; }
+.ot-resp.is-ok .strong { color: var(--green-700); }
+.ot-resp.is-err { border-color: #F6C9CB; background: var(--red-50); }
+.ot-resp.is-err .strong { color: var(--red-700); }
+.ot-tl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ot-tl li { display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; border-radius: 6px; font-size: var(--fs-sm); line-height: 1.45; animation: ot-in var(--dur) var(--ease-out); }
+.ot-tl li .ico, .ot-tl li .spin { flex: none; margin-top: 2px; }
+.ot-tl li .spin { width: 14px; height: 14px; }
+.ot-tl li.is-ok .ico { color: var(--green-700); }
+.ot-tl li.is-err { background: var(--red-50); color: var(--red-700); }
+.ot-tl li.is-warn .ico { color: var(--amber-700); }
+.ot-tl li.is-run { background: #fff; font-weight: 600; }
+.ot-tl li .hint-xs { flex: none; }
+@keyframes ot-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.ot-run-sm .ot-tl li { font-size: var(--fs-xs); padding: 4px 6px; }
+.ot-verify { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ot-verify .label code { overflow-wrap: anywhere; }
+.ot-verify .row { flex-wrap: nowrap; }
+.ot-verify-in { max-width: 180px; font-size: var(--fs-lg); letter-spacing: .08em; }
+
+/* protection */
+.ot-protect .card-head h2 { display: flex; align-items: center; gap: 8px; }
+.ot-prow { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--border); }
+.ot-prow .toggle { margin-top: 1px; }
+.ot-prow.is-locked { color: var(--slate); }
+.ot-prow.is-locked > .ico { margin: 3px 12px 0 11px; }
+.ot-pnums { margin-top: 6px; gap: var(--s-3); }
+.ot-num { width: 72px; min-height: 32px; padding: 4px 8px; }
+.input-sm { min-height: 32px; padding: 5px 10px; font-size: var(--fs-sm); }
+.ot-prow .input-sm.mono { margin-top: 6px; font-size: var(--fs-xs); }
+
+/* templates */
+.ot-tpls .tbl td { vertical-align: middle; }
+.ot-lang { display: inline-grid; place-items: center; min-width: 30px; height: 22px; padding: 0 6px; margin-right: 4px; border-radius: 6px; font-size: 11px; font-weight: 700; border: 1px dashed var(--border-strong); color: var(--muted); }
+.ot-lang.is-set { border-style: solid; border-color: var(--navy-50); background: var(--navy-50); color: var(--navy); }
+.ot-set { min-width: 180px; max-width: 320px; line-height: 1.45; }
+
+/* deliveries */
+.ot-dl-filter { width: auto; min-width: 180px; min-height: 32px; font-size: var(--fs-sm); margin-left: auto; }
+.ot-deliv .card-head h2 { margin-right: 0; }
+.ot-deliv td a { color: var(--navy); font-weight: 600; text-decoration: none; }
+.ot-deliv td a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* template editor (modal) */
+.ot-editor .modal-body { padding-top: 8px; }
+.ot-ed { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); gap: var(--s-5); align-items: start; }
+.ot-ed-head { align-items: start; }
+.ot-ed-head .field > .chip, .ot-ed-head .field > .seg { align-self: flex-start; }
+.ot-ro { display: inline-flex; align-items: center; min-height: 38px; padding: 0 12px; border-radius: 10px; background: var(--sunken); border: 1px solid var(--border); font-size: var(--fs-sm); }
+.ot-langtabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.ot-langtabs button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; background: none; font: inherit; font-size: var(--fs-sm); font-weight: 600; color: var(--slate); margin-bottom: -1px; white-space: nowrap; }
+.ot-langtabs button:hover { color: var(--text); }
+.ot-langtabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--orange); }
+.ot-var { border: 0; cursor: pointer; }
+.ot-var:hover { background: var(--navy); color: #fff; }
+.ot-say { margin: 0; font-size: var(--fs); line-height: 1.75; overflow-wrap: anywhere; }
+.ot-say .w { color: var(--muted); border-radius: 3px; transition: color var(--dur-fast) var(--ease-out); }
+.ot-say .w.on { color: var(--text); }
+.ot-say .w.cur { color: var(--navy); background: var(--orange-50); }
+.ot-ed-side { padding: var(--s-4); border-radius: var(--r-lg); background: var(--sunken); border: 1px solid var(--border); }
+.ot-ed-side input[type="range"] { width: 100%; accent-color: var(--orange); }
+.ot-ed-test { background: #fff; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 1279px) {
+  .ot-mid { grid-template-columns: minmax(0, 1fr); }
+  .ot-mid > .span-2 { grid-column: auto; }
+}
+@media (max-width: 1023px) {
+  .ot-con-grid, .ot-run-wrap { grid-template-columns: minmax(0, 1fr); }
+  .ot-ed { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 767px) {
+  .ot-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ot-tiles > :last-child { grid-column: 1 / -1; }
+  .ot-req-head code { white-space: normal; word-break: break-all; }
+  .ot-dl-filter { margin-left: 0; flex: 1 1 100%; }
+  .ot-verify .row { flex-wrap: wrap; }
+  .ot-verify-in { max-width: none; flex: 1 1 140px; }
+  .ot-ed-head { grid-template-columns: minmax(0, 1fr); }
+}
+
+html[lang="th"] .ot-say, html[lang="th"] .ot-tl li { line-height: 1.8; }
+html[lang^="zh"] .ot-say { line-height: 1.85; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ot-tl li { animation: none !important; }
+  .ot-say .w, .ot-chart svg rect { transition: none !important; }
+}
+
+/* inline icons inside running text (svg is display:block globally) */
+.ot p > svg.ico, .ot-ed p > svg.ico, .ot .hint-xs > svg.ico { display: inline-block; vertical-align: -2px; margin-right: 2px; }
+.ot .seg button, .ot-ed .seg button { display: inline-flex; align-items: center; gap: 6px; }

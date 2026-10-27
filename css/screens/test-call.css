@@ -1,0 +1,16 @@
+/* Test call — screen-owned styles (prefix tc-). */
+.tc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: var(--s-4); align-items: start; }
+.tc-dialer-card { padding: var(--s-4); }
+.tc-foot { margin-top: var(--s-2); }
+.tc-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.tc-steps li { display: flex; gap: 10px; align-items: flex-start; font-size: var(--fs-sm); line-height: 1.45; }
+.tc-list { list-style: none; margin: 0; padding: 0; }
+.tc-row { display: flex; align-items: center; gap: 10px; padding: 10px var(--s-4); border-bottom: 1px solid var(--border); color: inherit; text-decoration: none; font-size: var(--fs-sm); }
+.tc-list li:last-child .tc-row { border-bottom: 0; }
+.tc-row:hover { background: var(--hover); }
+@media (max-width: 1023px) {
+  .tc-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 767px) {
+  .tc-dialer-card { padding: var(--s-2); border: 0; background: transparent; box-shadow: none; }
+}
