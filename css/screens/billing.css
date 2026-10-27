@@ -59,7 +59,38 @@
 .bl-plan-sales .bl-plan-rate { font-size: var(--fs-md); }
 
 /* limits + offers */
-.bl-row2 { align-items: start; }
+.bl-row2 { align-items: stretch; }
+.bl-row2 > .card { display: flex; flex-direction: column; }
+.bl-row2 > .card > .card-foot { margin-top: auto; }
+
+/* how you pay */
+.bl-mode .card-body { flex: 1; }
+.bl-mode-what { margin: 0; }
+.bl-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3); }
+.bl-fact { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r); background: var(--sunken); }
+.bl-fact .k { font-size: var(--fs-xs); color: var(--slate); }
+.bl-fact .v { font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.bl-fact .progress { margin-top: 4px; }
+
+/* commitment plan */
+.bl-commit { border-color: var(--navy-50); }
+.bl-figs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--s-4); }
+.bl-fig { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bl-fig strong { font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.bl-fig .progress { margin: 4px 0 2px; }
+.bl-commit-note { margin: var(--s-3) 0 0; }
+.bl-commit-foot { align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+
+/* spending limits: one card, two columns */
+.bl-limits-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-3) var(--s-6); align-items: start; }
+
+/* file links under the period name (statements, monthly invoices) */
+.bl-files { flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; }
+.bl-files .linkbtn { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.bl-files .linkbtn .ico { margin: 0; }
+.bl-block { display: block; }
+.bl-plan.is-mine { border-color: var(--green); box-shadow: 0 0 0 1px var(--green) inset; }
+.bl-plan .chip { align-self: flex-start; margin-top: 4px; }
 .bl-kv { display: grid; grid-template-columns: minmax(110px, 38%) minmax(0, 1fr); gap: var(--s-3); padding: 10px 0; border-top: 1px dashed var(--border); font-size: var(--fs-sm); align-items: start; }
 .bl-kv .k { color: var(--slate); }
 .bl-kv .v { text-align: right; justify-self: end; }
@@ -87,12 +118,19 @@
 
 @media (max-width: 1279px) {
   .bl-row1 { grid-template-columns: minmax(0, 1fr); }
+  .bl-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .bl-facts { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 1023px) {
   .bl-row2 { grid-template-columns: minmax(0, 1fr); }
+  .bl-limits-body { grid-template-columns: minmax(0, 1fr); }
+  .bl-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 767px) {
   .bl-plan-grid, .bl-calc-grid { grid-template-columns: minmax(0, 1fr); }
+  .bl-figs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .bl-fig strong { font-size: var(--fs-md); }
+  .bl-facts { grid-template-columns: minmax(0, 1fr); }
   .bl-bars { gap: 3px; height: 180px; }
   .bl-row1 > .bl-chart .bl-bars { flex-basis: 180px; min-height: 180px; }
   .bl-sums { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

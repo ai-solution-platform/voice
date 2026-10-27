@@ -513,7 +513,7 @@ function wizard(ctx) {
   const w = ctx.state.wz;
   const body = [null, wzStep1, wzStep2, wzStep3, wzStep4, wzStep5][w.step](ctx);
   return h`<section class="card cn-wz" aria-labelledby="wz-h">
-    <div class="card-head"><h2 id="wz-h" tabindex="-1">${t('b.title')} <span class="hint">· ${t('wz.stepOf', { n: w.step, total: STEPS })}</span></h2>
+    <div class="card-head"><h2 id="wz-h" tabindex="-1">${t('b.title')} <span class="hint">· ${t('wz.stepOf', { n: w.step, total: STEPS })}<span class="wz-cur"> · ${t(`wz.s${w.step}`)}</span></span></h2>
       <button type="button" class="btn btn-sm" data-action="wz.saveexit">${icon('file', 'ico-sm')}${t('wz.saveExit')}</button>
       <button type="button" class="btn btn-sm btn-ghost" data-action="wz.close">${t('common.close')}</button></div>
     <div class="cn-wz-steps">${wzCircles(ctx)}</div>

@@ -17,7 +17,7 @@ import { t, tIn, getLang, LANGS, LANG_ORDER, onLangChange } from '../core/i18n.j
 import { fmt } from '../core/format.js';
 import { store } from '../core/store.js';
 import { go } from '../core/router.js';
-import { addCall, setStep, notify, balance, trialLeft, addVerifiedNumber, canAddVerified } from '../core/actions.js';
+import { addCall, setStep, notify, balance, trialLeft, addVerifiedNumber, canAddVerified, outboundRate } from '../core/actions.js';
 import { PRICES, billedMinutes, callCost } from '../data/prices.js';
 import { nowMs } from '../data/clock.js';
 import { SANDBOX_CALLER, SANDBOX_CALLER_E164, API_BASE, DEFAULT_WEBHOOK } from '../data/edge.js';
@@ -83,7 +83,7 @@ function createController(rootEl, opts) {
 
   function costLine() {
     if (env() === 'sandbox') return t('dialer.costSandbox', { left: fmt.num(trialLeft(), 1), total: fmt.int(PRICES.trial.minutes) });
-    const base = t('dialer.costLive', { rate: fmt.rate(PRICES.outbound) });
+    const base = t('dialer.costLive', { rate: fmt.rate(outboundRate()) }); // the plan rate when a plan is on
     return s.voice === 'premium' ? `${base} · ${t('dialer.costPremium', { rate: fmt.rate(PRICES.premiumVoice) })}` : base;
   }
 

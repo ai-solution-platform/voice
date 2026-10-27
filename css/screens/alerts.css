@@ -65,3 +65,12 @@
 }
 @media (prefers-reduced-motion: reduce) { .al-test li.is-done .al-test-ico { animation: none; } }
 html[data-motion="reduce"] .al-test li.is-done .al-test-ico { animation: none; }
+/* Row actions sit under the alert's details, so they never scroll out of view in a narrow table. */
+.al-acts { flex-wrap: wrap; margin-top: 8px; display: flex; }
+/* Phones: the time moves under the rule name so the details and their actions get the width. */
+.al-time-m { display: none; font-weight: 400; }
+@media (max-width: 767px) {
+  .al-hist th:first-child, .al-hist td:first-child { display: none; }
+  .al-time-m { display: block; }
+  .al-hist .al-details { min-width: 200px; }
+}

@@ -100,6 +100,12 @@ function header(ctx) {
 const opt = (v, label, selected) => h`<option value="${v}" ${raw(String(v) === String(selected) ? 'selected' : '')}>${label}</option>`;
 const toggle = (ctx, action, on, label, extra = '') => h`<button type="button" class="toggle" role="switch" aria-checked="${!!on}" data-action="${action}" aria-label="${label}" ${raw(extra)}></button>`;
 
+/** Credit exchange rate from the contract (demo: 1 credit = 1.00 THB). Read-only here. */
+function creditRate(ctx) {
+  const r = ctx.store.get('org.creditRate') || {};
+  return { credits: Number(r.credits) || 1, thb: Number(r.thb) || 1, label: r.label ? ctx.loc(r.label) : '' };
+}
+
 function generalTab(ctx) {
   const { t } = ctx;
   const g = cur(ctx).general;
@@ -109,11 +115,12 @@ function generalTab(ctx) {
       <label class="field"><span class="label">${t('gen.name')}</span><input class="input" data-field="st.gen.name" value="${g.name}" autocomplete="organization"><span class="hint-xs">${t('gen.nameHint')}</span></label>
       <label class="field"><span class="label">${t('gen.tz')}</span><select class="select" data-field="st.gen.tz">${opt('Asia/Bangkok', 'Asia/Bangkok (UTC+7)', g.tz)}${opt('Asia/Singapore', 'Asia/Singapore (UTC+8)', g.tz)}</select><span class="hint-xs">${t('gen.tzHint')}</span></label>
       <label class="field"><span class="label">${t('gen.lang')}</span><select class="select" data-field="st.gen.lang">${['en', 'th', 'zh'].map((c) => opt(c, LANGS[c].label, g.lang))}</select><span class="hint-xs">${t('gen.langHint')}</span></label>
-      <label class="field"><span class="label">${ctx.term(t('gen.cid'), 'caller_id')}</span><select class="select" data-field="st.gen.cid">${nums.length ? nums.map((n) => opt(n.number, n.number, g.cid)) : opt('', t('gen.noNumber'), '')}</select>
+      <label class="field"><span class="label">${ctx.term(t('gen.cid'), 'caller_id')}<span class="sr-only" id="st-l-cid">${t('gen.cid')}</span></span><select class="select" data-field="st.gen.cid" aria-labelledby="st-l-cid">${nums.length ? nums.map((n) => opt(n.number, n.number, g.cid)) : opt('', t('gen.noNumber'), '')}</select>
         ${nums.length ? '' : h`<a class="linkbtn hint-xs" href="#/numbers/buy" data-action="st.gen.buy">${t('gen.buy')}</a>`}</label>
-      <label class="field"><span class="label">${ctx.term(t('gen.sub'), 'subaccount')}</span><select class="select" data-field="st.gen.sub">${ctx.list('subAccounts').map((s) => opt(s.id, ctx.loc(s.name), g.sub))}</select></label>
+      <label class="field"><span class="label">${ctx.term(t('gen.sub'), 'subaccount')}<span class="sr-only" id="st-l-sub">${t('gen.sub')}</span></span><select class="select" data-field="st.gen.sub" aria-labelledby="st-l-sub">${ctx.list('subAccounts').map((s) => opt(s.id, ctx.loc(s.name), g.sub))}</select></label>
       <label class="field"><span class="label">${t('gen.ring')}</span><select class="select" data-field="st.gen.ring">${[20, 30, 45, 60].map((s) => opt(s, t('gen.sec', { n: s }), g.ring))}</select><span class="hint-xs">${t('gen.ringHint')}</span></label>
-      <label class="field"><span class="label">${ctx.term(t('gen.voice'), 'voice_tier')}</span><select class="select" data-field="st.gen.voice">${['th', 'en', 'zh'].map((c) => opt(c, t(`voiceLang.${c}`), g.voice))}</select><span class="hint-xs">${t('gen.voiceHint')}</span></label>
+      <label class="field"><span class="label">${ctx.term(t('gen.voice'), 'voice_tier')}<span class="sr-only" id="st-l-voice">${t('gen.voice')}</span></span><select class="select" data-field="st.gen.voice" aria-labelledby="st-l-voice">${['th', 'en', 'zh'].map((c) => opt(c, t(`voiceLang.${c}`), g.voice))}</select><span class="hint-xs">${t('gen.voiceHint')}</span></label>
+      <div class="field st-rate"><span class="label" id="st-l-rate">${t('gen.rate')}</span><span class="st-rate-v">${creditRate(ctx).label || t('gen.rateValue', { credits: creditRate(ctx).credits, thb: ctx.fmt.rate(creditRate(ctx).thb) })} <span class="hint-xs">${t('gen.rateSet')}</span></span><span class="hint-xs">${t('gen.rateHint')}</span></div>
     </div></section>
     ${webhooksLink(ctx)}`;
 }
@@ -128,7 +135,7 @@ function complianceTab(ctx) {
   const c = cur(ctx).compliance;
   const d = dnc(ctx);
   const check = ctx.state.check;
-  const sel = (field, v) => h`<select class="select st-time" data-field="st.hours.${field}">${TIMES.map((x) => opt(x, x, v))}</select>`;
+  const sel = (field, v, label) => h`<select class="select st-time" data-field="st.hours.${field}" aria-label="${label}">${TIMES.map((x) => opt(x, x, v))}</select>`;
   const notice = tIn(ctx.state.recLang, 'rec.text', undefined, 'settings');
   return h`
   <section class="card" aria-labelledby="st-dnc-h"><div class="card-head"><h2 id="st-dnc-h">${ctx.term(t('dnc.title'), 'dnc')}</h2>
@@ -147,8 +154,8 @@ function complianceTab(ctx) {
 
   <section class="card" aria-labelledby="st-hours-h" data-inv="st.hours"><div class="card-head"><h2 id="st-hours-h">${ctx.term(t('hours.title'), 'calling_hours')}</h2><span class="chip">${t('hours.default')}</span></div>
     <div class="card-body stack-3">
-      <div class="st-hours"><span class="strong">${t('hours.weekdays')}</span><span class="row-tight">${sel('wdFrom', c.wdFrom)}<span aria-hidden="true">–</span>${sel('wdTo', c.wdTo)}</span></div>
-      <div class="st-hours"><span class="strong">${t('hours.weekends')}</span><span class="row-tight">${sel('weFrom', c.weFrom)}<span aria-hidden="true">–</span>${sel('weTo', c.weTo)}</span></div>
+      <div class="st-hours"><span class="strong">${t('hours.weekdays')}</span><span class="row-tight">${sel('wdFrom', c.wdFrom, t('hours.fromAria', { days: t('hours.weekdays') }))}<span aria-hidden="true">–</span>${sel('wdTo', c.wdTo, t('hours.toAria', { days: t('hours.weekdays') }))}</span></div>
+      <div class="st-hours"><span class="strong">${t('hours.weekends')}</span><span class="row-tight">${sel('weFrom', c.weFrom, t('hours.fromAria', { days: t('hours.weekends') }))}<span aria-hidden="true">–</span>${sel('weTo', c.weTo, t('hours.toAria', { days: t('hours.weekends') }))}</span></div>
       ${c.wdFrom >= c.wdTo || c.weFrom >= c.weTo ? h`<span class="field-err">${t('hours.bad')}</span>` : ''}
       <div class="st-line"><div class="grow"><strong>${t('hours.holidays')}</strong><span class="hint-xs">${t('hours.holidaysHint')}</span></div>${toggle(ctx, 'st.hours.holidays', c.holidays, t('hours.holidays'))}</div>
       <p class="hint-xs">${t('hours.note')}</p></div></section>
@@ -162,18 +169,18 @@ function complianceTab(ctx) {
         <blockquote class="st-quote" lang="${LANGS[ctx.state.recLang].html}">${notice}</blockquote>
         <span class="hint-xs">${t('rec.voiceNote')}</span></div>
       <div class="st-line"><div class="grow"><strong>${t('rec.stop')}</strong><span class="hint-xs">${t('rec.stopHint')}</span></div>${toggle(ctx, 'st.rec.stop', c.recStop, t('rec.stop'))}</div>
-      <div class="st-line"><div class="grow"><strong>${ctx.term(t('rec.retention'), 'retention')}</strong><span class="hint-xs">${t('rec.retentionHint', { rate: fmt.rate(PRICES.recording) })}</span></div>
-        <select class="select st-narrow" data-field="st.rec.retention">${[30, 90, 180, 365].map((dd) => opt(dd, dd === PRICES.recordingDays ? t('rec.daysDefault', { n: dd }) : t('rec.days', { n: dd }), c.retention))}</select></div>
+      <div class="st-line"><div class="grow"><strong>${ctx.term(t('rec.retention'), 'retention')}<span class="sr-only" id="st-l-ret">${t('rec.retention')}</span></strong><span class="hint-xs">${t('rec.retentionHint', { rate: fmt.rate(PRICES.recording) })}</span></div>
+        <select class="select st-narrow" data-field="st.rec.retention" aria-labelledby="st-l-ret">${[30, 90, 180, 365].map((dd) => opt(dd, dd === PRICES.recordingDays ? t('rec.daysDefault', { n: dd }) : t('rec.days', { n: dd }), c.retention))}</select></div>
     </div></section>
 
   <section class="card" aria-labelledby="st-loc-h"><div class="card-head"><h2 id="st-loc-h">${t('loc.title')}</h2></div>
     <div class="card-body stack-3"><p class="st-loc">${icon('globe')}<span>${t('loc.text')}</span></p>
       <div class="st-line"><div class="grow"><strong>${t('dest.title')}</strong><span class="hint-xs">${t('dest.hint')}</span></div><a class="btn btn-sm" href="#/billing?section=limits" data-action="st.dest">${t('dest.link')}</a></div>
-      <div class="st-line"><div class="grow"><strong>${t('purpose.title')}</strong><span class="hint-xs">${t('purpose.hint')}</span></div>
-        <select class="select st-narrow" data-field="st.purpose">${['reminder', 'service', 'marketing', 'payment'].map((p) => opt(p, t(`purpose.${p}`), c.purpose))}</select></div>
+      <div class="st-line"><div class="grow"><strong id="st-l-purpose">${t('purpose.title')}</strong><span class="hint-xs">${t('purpose.hint')}</span></div>
+        <select class="select st-narrow" data-field="st.purpose" aria-labelledby="st-l-purpose">${['reminder', 'service', 'marketing', 'payment'].map((p) => opt(p, t(`purpose.${p}`), c.purpose))}</select></div>
       ${c.purpose === 'payment' ? h`<div class="note note-warn">${icon('alert')}<span>${t('purpose.paymentNote')}</span></div>` : c.purpose === 'marketing' ? h`<div class="note note-warn">${icon('alert')}<span>${t('purpose.marketingNote')}</span></div>` : ''}
-      <div class="st-line"><div class="grow"><strong>${t('cap.title')}</strong><span class="hint-xs">${t('cap.hint')}</span></div>
-        <select class="select st-narrow" data-field="st.cap">${[1, 2, 3].map((n) => opt(n, t('cap.n', { count: n }), c.cap))}</select></div>
+      <div class="st-line"><div class="grow"><strong id="st-l-cap">${t('cap.title')}</strong><span class="hint-xs">${t('cap.hint')}</span></div>
+        <select class="select st-narrow" data-field="st.cap" aria-labelledby="st-l-cap">${[1, 2, 3].map((n) => opt(n, t('cap.n', { count: n }), c.cap))}</select></div>
       <p class="hint-xs">${t('consent')}</p></div></section>`;
 }
 
@@ -214,8 +221,8 @@ function securityTab(ctx) {
         <div class="seg" role="group" aria-label="${t('sec.twofa')}">${['admins', 'everyone'].map((v) => h`<button type="button" data-action="st.sec.2fa" data-value="${v}" aria-pressed="${s.twofa === v}">${t(`sec.twofa.${v}`)}</button>`)}</div></div>
       <label class="field"><span class="label">${t('sec.ip')}</span><textarea class="textarea mono" rows="2" data-field="st.sec.ip" placeholder="203.0.113.0/24, 198.51.100.7" spellcheck="false" aria-invalid="${bad.length > 0}" aria-describedby="st-ip-h">${s.ips}</textarea>
         <span class="${bad.length ? 'field-err' : 'hint-xs'}" id="st-ip-h">${bad.length ? t('sec.ipBad', { ip: bad[0] }) : t('sec.ipHint')}</span></label>
-      <div class="st-line"><div class="grow"><strong>${t('sec.timeout')}</strong><span class="hint-xs">${t('sec.timeoutHint')}</span></div>
-        <select class="select st-narrow" data-field="st.sec.timeout">${['1h', '8h', '24h'].map((v) => opt(v, t(`sec.timeout.${v}`), s.timeout))}</select></div>
+      <div class="st-line"><div class="grow"><strong id="st-l-timeout">${t('sec.timeout')}</strong><span class="hint-xs">${t('sec.timeoutHint')}</span></div>
+        <select class="select st-narrow" data-field="st.sec.timeout" aria-labelledby="st-l-timeout">${['1h', '8h', '24h'].map((v) => opt(v, t(`sec.timeout.${v}`), s.timeout))}</select></div>
       <div class="st-line"><div class="grow"><strong>${t('sec.audit')}</strong><span class="hint-xs">${t('sec.auditHint')}</span></div><a class="btn btn-sm" href="#/users?tab=audit" data-action="st.sec.audit">${icon('list')}${t('sec.auditBtn')}</a></div>
     </div></section>`;
 }

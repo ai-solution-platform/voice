@@ -4,7 +4,7 @@
 // spend, trunk health, recent calls). Every number comes from the store (js/data/active.js).
 
 import { raw, reducedMotion } from '../core/dom.js';
-import { stepsDone, isActive, trialLeft, balance, setStep } from '../core/actions.js';
+import { stepsDone, isActive, trialLeft, balance, setStep, describeProfile } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES } from '../data/prices.js';
 
@@ -160,6 +160,16 @@ function tile(ctx, key, value, line, href, tipKey) {
   return href ? h`<a class="card tile tile-link" href="${href}" data-action="ov.tile.${key}">${inner}</a>` : h`<div class="card tile">${inner}</div>`;
 }
 
+/** First tile by billing mode: prepaid credits (with the plan line on a plan) or, postpaid, credit left this month. */
+function creditsTile(ctx, own, avg) {
+  const { t, fmt } = ctx;
+  if (own) return tile(ctx, 'credits', fmt.floor(own.left), t('tile.creditsOwn', { moved: fmt.int(own.moved) }), '#/billing');
+  const d = describeProfile();
+  const planLine = d.plan ? t('tile.creditsPlan', { min: fmt.int(d.plan.committedMinutes), used: fmt.int(d.plan.usedMinutes) }) : null;
+  if (d.mode === 'postpaid') return tile(ctx, 'creditLeft', fmt.floor(d.available), planLine || t('tile.creditLeftLine', { used: fmt.int(d.usedThisMonth), limit: fmt.int(d.creditLimit) }), '#/billing');
+  return tile(ctx, 'credits', fmt.floor(balance()), planLine || t('tile.creditsLine', { days: fmt.int(Math.floor(balance() / avg)) }), '#/billing');
+}
+
 function tilesActive(ctx) {
   const { t, fmt, html: h } = ctx;
   const st = activeStats(ctx);
@@ -170,7 +180,7 @@ function tilesActive(ctx) {
   const avg = ctx.store.get('billing.avgPerDay7');
   const range = ctx.state.range;
   return h`<div class="grid g-5 ov-tiles">
-    ${tile(ctx, 'credits', own ? fmt.floor(own.left) : fmt.floor(balance()), own ? t('tile.creditsOwn', { moved: fmt.int(own.moved) }) : t('tile.creditsLine', { days: fmt.int(Math.floor(balance() / avg)) }), '#/billing')}
+    ${creditsTile(ctx, own, avg)}
     ${tile(ctx, 'calls', fmt.int(st.calls), t('tile.callsLine', { out: fmt.int(st.outbound), otp: fmt.int(st.otp), inb: fmt.int(st.inbound) }), `#/logs?range=${range}`)}
     ${tile(ctx, 'answered', fmt.pct(range === 'today' && !subId ? today.answerRatePct : pctOf(st.answered, st.calls)), t('tile.answeredLine', { a: fmt.int(st.answered), b: fmt.int(st.calls) }), `#/reports?range=${range}`, 'answer_rate')}
     ${tile(ctx, 'used', fmt.int(st.used), range === 'today' ? t('tile.usedLine', { voice: fmt.int(today.monthVoice), all: fmt.int(today.monthAll) }) : t('tile.usedRange'), '#/billing?section=usage')}
@@ -398,7 +408,7 @@ export function mount(root, ctx) {
   });
   ctx.inputs(root, { sub: (v) => ctx.setState({ sub: v }) });
   // Re-render on the data this screen shows.
-  ctx.watch('calls', 'onboarding', 'env', 'mode', 'credits', 'trunks', 'numbers', 'limits', 'today', 'verifiedNumbers', 'apiKeys');
+  ctx.watch('calls', 'onboarding', 'env', 'mode', 'credits', 'billing', 'trunks', 'numbers', 'limits', 'today', 'verifiedNumbers', 'apiKeys');
   // Live timers tick from the demo clock.
   ctx.every(() => {
     root.querySelectorAll('[data-live-start]').forEach((td) => { td.textContent = ctx.fmt.duration((nowMs() - Number(td.dataset.liveStart)) / 1000); });

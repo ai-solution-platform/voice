@@ -66,3 +66,4 @@
 }
 @media (prefers-reduced-motion: reduce) { .st-dirty { animation: none; } }
 html[data-motion="reduce"] .st-dirty { animation: none; }
+.st-rate .st-rate-v { font-weight: 600; padding: 8px 0 2px; }

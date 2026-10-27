@@ -13,7 +13,7 @@ Interactive demo of the ANTS Voice console, part of the ANTS communication platf
 1. **Test call** — dial, hear the ringback, the message is read aloud, then find the call in **Call logs**.
 2. **Connect** — copy an API sample, or follow the 5-step SIP trunk wizard.
 3. **Campaigns** — create a reminder campaign: see the cost before launch, confirm, and watch live progress.
-4. **Billing** — top up credits, compare pay as you go with volume plans.
+4. **Billing** — prepaid top-up, postpaid monthly invoice, or a monthly commitment plan with credits added automatically; compare pay as you go with volume plans. Switch the billing mode from the Demo controls.
 5. **Demo controls** (sidebar foot / footer) — switch between a new account and a busy account, simulate an error, or reset the demo.
 
 ## Run locally

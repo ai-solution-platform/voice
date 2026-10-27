@@ -369,7 +369,12 @@ export const BILLING = {
   ],
   nextInvoiceNo: 702,
   offers: { firstTopUpUsedAt: '2026-09-02', annual: 'available', trialUsedUntil: '2026-10-02' },
+  // Billing mode (see actions.js "billing modes"). The busy account starts on prepaid credits; the Demo panel
+  // switches it to postpaid and/or a 50,000-minute commitment plan.
+  profile: { mode: 'prepaid', creditLimit: null, paymentTermsDays: null, usedThisMonth: null, plan: null, invoices: [] },
 };
+/** Credit exchange rate. In the demo 1 credit = 1.00 THB; a real account's rate is set in its contract. */
+export const CREDIT_RATE = { credits: 1, thb: 1, currency: 'THB', effectiveFrom: '2026-09-01', label: { en: '1 credit = 1.00 THB', th: '1 เครดิต = 1.00 บาท', zh: '1 点数 = 1.00 泰铢' } };
 export const LIMITS = { daily: 8000, monthly: 120000, action: 'block-and-notify', channels: ['email', 'line'], international: false, premiumRate: 'blocked', perSub: { [S.app]: 1500, [S.dv]: 5000, [S.ck]: 2000 } };
 /** Sample pace this month: ≈ 52,100 outbound min → a volume plan really would save money. */
 export const PACE_OUT_MIN = 52100;

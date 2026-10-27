@@ -22,7 +22,7 @@ const user = () => ({ id: 'user_01JB1SJ', name: 'Somchai Jaidee', initials: 'S',
 
 export function activeDataset() {
   return clone({
-    org: { id: 'org_01JB0EXTR', name: A.ORG_NAME, voiceSince: '2026-09-02', kycApproved: '2026-10-12' },
+    org: { id: 'org_01JB0EXTR', name: A.ORG_NAME, voiceSince: '2026-09-02', kycApproved: '2026-10-12', creditRate: A.CREDIT_RATE },
     user: user(),
     env: 'live',
     credits: { balance: A.BALANCE, trialTotal: PRICES.trial.minutes, trialUsed: PRICES.trial.minutes, trialEnds: '2026-10-02' /* the day the busy account used up its trial */, firstTopUpUsedAt: A.BILLING.offers.firstTopUpUsedAt },
@@ -63,7 +63,7 @@ export function activeDataset() {
 /** First-run account: created today, Owner only, Sandbox, 0 credits, trial 50 of 50 min, checklist 1/6. */
 export function firstRunDataset(orgName = A.ORG_NAME) {
   return clone({
-    org: { id: 'org_01JBNEW0', name: orgName, createdAt: new Date(DEMO_NOW - 25 * 60000).toISOString() },
+    org: { id: 'org_01JBNEW0', name: orgName, createdAt: new Date(DEMO_NOW - 25 * 60000).toISOString(), creditRate: { ...A.CREDIT_RATE, effectiveFrom: '2026-10-27' } },
     user: user(),
     env: 'sandbox',
     credits: { balance: 0, trialTotal: PRICES.trial.minutes, trialUsed: 0, firstTopUpUsedAt: null },
@@ -88,7 +88,7 @@ export function firstRunDataset(orgName = A.ORG_NAME) {
     otpStats: null,
     campaigns: [],
     reports: null,
-    billing: { usage: [], statements: [], invoices: [], nextInvoiceNo: 703, offers: { firstTopUpUsedAt: null, annual: 'available' } },
+    billing: { usage: [], statements: [], invoices: [], nextInvoiceNo: 703, offers: { firstTopUpUsedAt: null, annual: 'available' }, profile: { ...A.BILLING.profile } },
     alertRules: [],
     alertChannels: { emails: ['somchai@example.com'], lineGroup: null, webhook: null },
     alertHistory: [],

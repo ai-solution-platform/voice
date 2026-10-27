@@ -146,6 +146,12 @@ kbd, .kbd { font-family: var(--font-latin); font-size: 11px; font-weight: 600; c
 html[lang="th"] .credits-txt, html[lang="th"] .envseg button, html[lang="th"] .chip { line-height: 1.45; }
 .credits-txt small { font-size: 11px; color: var(--slate); font-weight: 500; }
 .credits-txt strong { font-size: var(--fs); font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Commitment plan: a third line under the value ("Plan 50,000 min · N used"); the chip stays inside the 60-px bar. */
+.credits-txt .plan-line { font-size: 10.5px; line-height: 1.25; color: var(--slate); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.credits.has-plan .credits-txt { line-height: 1.2; }
+html[lang="th"] .credits.has-plan .credits-txt { line-height: 1.3; }
+.menu-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-width: 320px; }
+.menu-lines li:first-child { color: var(--text); font-weight: 600; }
 
 .iconbtn {
   width: 38px; height: 38px; display: inline-grid; place-items: center; border-radius: 10px; border: 1px solid var(--border); background: #fff; color: var(--text-2);
@@ -247,7 +253,8 @@ main#main { flex: 1; outline: none; }
 .btn-icon { width: 36px; padding: 0; }
 .btn-sm.btn-icon { width: 30px; }
 .linkbtn { border: 0; background: none; padding: 0; color: var(--navy); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); font-size: inherit; }
-.linkbtn:hover { text-decoration-color: currentColor; }
+.linkbtn:hover { color: var(--navy-700); text-decoration-color: currentColor; text-decoration-thickness: 2px; }
+.linkbtn:active { opacity: .75; }
 .linkbtn .ico { vertical-align: -3px; margin-right: 4px; }
 a.linkbtn { display: inline-flex; align-items: center; gap: 4px; }
 a.linkbtn .ico { margin-right: 0; }
@@ -832,6 +839,7 @@ a:focus-visible .chart-hit, .chart-hit:hover { fill: rgba(242, 99, 34, .18); str
   .setup-pill { padding: 0 10px; }
   .setup-pill .bar { display: none; }
   .credits .tb-topup { display: none; }
+  .credits-txt .plan-line { display: none; }
   .credits { padding-right: 10px; }
   .envseg button { padding: 4px 8px; }
 }

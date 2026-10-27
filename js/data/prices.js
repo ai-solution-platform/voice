@@ -141,3 +141,64 @@ export function estimateMonthly({ minutes = 0, concurrent = PRICES.trunkIncluded
   const minuteCost = paygCost(minutes);
   return { trunk: tr, numbers: num, minuteCost, total: tr.total + num + minuteCost, plans };
 }
+
+// ---------- billing modes: credit rate, commitment plans, proration (pure — no store) ----------
+// Every price above is in credits. Money = credits × rate.thb ÷ rate.credits, with the account's rate
+// (store org.creditRate). The demo uses 1 credit = 1.00 THB; a real account's rate is set in its contract.
+
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+export const DEMO_CREDIT_RATE = Object.freeze({ credits: 1, thb: 1, currency: 'THB', effectiveFrom: '2026-09-01' });
+
+/** Credits → money at a credit rate ({ credits, thb }). */
+export const creditsToThb = (credits, rate = DEMO_CREDIT_RATE) => r2(((Number(credits) || 0) * rate.thb) / rate.credits);
+/** Money → credits at a credit rate. */
+export const thbToCredits = (thb, rate = DEMO_CREDIT_RATE) => r2(((Number(thb) || 0) * rate.credits) / rate.thb);
+
+/**
+ * A monthly commitment plan. The contract sets it (sales confirms it; the customer only requests one):
+ *   committedMinutes × rate = monthlyCharge, charged on cycleStartDay and added as plan credits at once;
+ *   outbound minutes are drawn at the plan rate; minutes beyond the commitment are overage at the same rate;
+ *   unused minutes follow the contract's unusedPolicy: 'expire' | 'rollover' (next month only) | 'carry' (carryMonths).
+ */
+export function makePlan(id, { cycleStartDay = 1, usedMinutes = 0, unusedPolicy = 'expire', carryMonths = 0, carriedMinutes = 0, startedAt = null, months = PRICES.planMonths } = {}) {
+  const p = PRICES.plans.find((x) => x.id === id) || PRICES.plans[0];
+  const plan = {
+    id: p.id, committedMinutes: p.minMinutes, rate: p.rate, monthlyCharge: r2(p.minMinutes * p.rate), cycleStartDay,
+    usedMinutes: 0, includedCreditsAdded: r2(p.minMinutes * p.rate), overageMinutes: 0,
+    unusedPolicy, carryMonths: unusedPolicy === 'carry' ? carryMonths || 3 : 0, carriedMinutes, startedAt, months,
+  };
+  return { ...plan, ...planUsage(plan, usedMinutes) };
+}
+
+/** Minutes this cycle → what the plan covers. Included = commitment + minutes carried over from earlier cycles. */
+export function planUsage(plan, usedMinutes) {
+  const used = Math.max(0, Math.round(Number(usedMinutes) || 0));
+  const included = plan.committedMinutes + (plan.carriedMinutes || 0);
+  const overageMinutes = Math.max(0, used - included);
+  return { usedMinutes: used, overageMinutes, leftMinutes: Math.max(0, included - used), overageCredits: r2(overageMinutes * plan.rate) };
+}
+
+/** Cost of outbound minutes on a plan (the plan rate, inside or beyond the commitment). */
+export const planMinutesCost = (minutes, plan) => r2((Number(minutes) || 0) * plan.rate);
+
+/** Unused minutes at the end of a cycle → minutes carried into the next one, by the contract's policy. */
+export function carryOver(plan) {
+  const unused = Math.max(0, plan.committedMinutes - plan.usedMinutes);
+  if (plan.unusedPolicy === 'rollover' || plan.unusedPolicy === 'carry') return unused;
+  return 0;
+}
+
+/**
+ * Proration for a plan that starts (or a mode that changes) mid-cycle: the share of the cycle that is left.
+ * prorate(49500, { start: '2026-10-27', cycleStartDay: 1 }) → { days: 5, cycleDays: 31, fraction, value: 7983.87 }
+ */
+export function prorate(value, { start, cycleStartDay = 1 } = {}) {
+  const [y, m, d] = String(start).slice(0, 10).split('-').map(Number);
+  const cycleStart = d >= cycleStartDay ? Date.UTC(y, m - 1, cycleStartDay) : Date.UTC(y, m - 2, cycleStartDay);
+  const next = new Date(cycleStart); next.setUTCMonth(next.getUTCMonth() + 1);
+  const cycleDays = Math.round((next - cycleStart) / 86400000);
+  const days = Math.max(0, Math.round((next - Date.UTC(y, m - 1, d)) / 86400000));
+  const fraction = cycleDays ? days / cycleDays : 0;
+  return { days, cycleDays, fraction, value: r2((Number(value) || 0) * fraction) };
+}

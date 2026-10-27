@@ -12,7 +12,7 @@ import { fmt } from './core/format.js';
 import { store } from './core/store.js';
 import { persist, KEYS } from './core/persist.js';
 import { go, getScreens, currentScreen } from './core/router.js';
-import { balance, trialLeft, stepsDone, markAllRead, markRead, setEnv, setMode, isActive } from './core/actions.js';
+import { balance, trialLeft, stepsDone, markAllRead, markRead, setEnv, setMode, isActive, describeProfile, setBillingPreset, billingProfile } from './core/actions.js';
 import { PRICES } from './data/prices.js';
 import { TEST_WORKSPACE_NAME } from './data/active.js';
 import { ui } from './ui/index.js';
@@ -21,7 +21,7 @@ import { GO_KEYS } from './ui/palette.js';
 const GROUPS = ['start', 'build', 'operate', 'account'];
 const PRODUCTS = [{ id: 'sms', icon: 'sms' }, { id: 'line', icon: 'chat' }, { id: 'email', icon: 'mail' }, { id: 'voice', icon: 'phone' }];
 const LANG_MENU = ['en', 'zh', 'th']; // English · 中文 · ไทย
-const NOTIF_ICON = { welcome: 'sparkles', numberVerified: 'check-circle', incidentResolved: 'activity', failureRate: 'alert', ticketReply: 'lifebuoy', trunkDown: 'server', campaignFinished: 'megaphone', numberOrdered: 'hash', webhookFailing: 'link', plansNew: 'sparkles', testCall: 'phone-call', topUp: 'coin', planRequest: 'calendar', ticketReceived: 'ticket', alertTest: 'bell' };
+const NOTIF_ICON = { welcome: 'sparkles', numberVerified: 'check-circle', incidentResolved: 'activity', failureRate: 'alert', ticketReply: 'lifebuoy', trunkDown: 'server', campaignFinished: 'megaphone', numberOrdered: 'hash', webhookFailing: 'link', plansNew: 'sparkles', testCall: 'phone-call', topUp: 'coin', planRequest: 'calendar', ticketReceived: 'ticket', alertTest: 'bell', planCycle: 'calendar' };
 const ANNOUNCE_PIN = 'announce-pin-dismissed';
 
 let hooks = {};
@@ -75,13 +75,23 @@ function creditsHTML() {
         <span class="coin">${ui.icon('coin')}</span><span class="credits-txt"><small>${balance() > 0 ? t('top.trialCredits', { credits: fmt.floor(balance()) }) : t('top.trial')}</small><strong>${t('top.trialValue', { left: fmt.num(left, 1), total: fmt.int(PRICES.trial.minutes) })}</strong></span></button>
       <button type="button" class="btn btn-sm tb-topup" data-action="shell.credits.topup">${t('top.topup')}</button></div>`;
   }
+  // Live: prepaid shows the credit balance; postpaid shows this month's usage against the credit limit; a plan
+  // adds a third line "Plan 50,000 min · N used" (hidden when the top bar is tight — the credits menu has it).
+  const d = describeProfile();
+  const planLine = d.plan ? html`<small class="plan-line">${t('bm.chip.plan', { min: fmt.int(d.plan.committedMinutes), used: fmt.int(d.plan.usedMinutes) })}</small>` : '';
+  if (d.mode === 'postpaid') {
+    const tone = d.pctOfLimit >= 95 ? 'is-red' : d.pctOfLimit >= 80 ? 'is-amber' : '';
+    return html`<div class="credits tb-credits ${tone} ${d.plan ? 'has-plan' : ''}" data-tour="credits">
+      <button type="button" class="credits-btn" data-action="shell.credits" aria-haspopup="menu" aria-expanded="false" data-tip-key="${d.modeKey}">
+        <span class="coin">${ui.icon('coin')}</span><span class="credits-txt"><small>${tone ? t('bm.chip.nearLimit') : t('bm.chip.used')}</small><strong>${t('bm.chip.usedValue', { used: fmt.floor(d.usedThisMonth), limit: fmt.int(d.creditLimit) })}</strong>${planLine}</span></button></div>`;
+  }
   const b = balance();
   const r = runwayDays();
   const tone = r != null && r < 1 ? 'is-red' : r != null && r < 3 ? 'is-amber' : '';
   const sub = r != null ? t('top.runway', { days: fmt.int(Math.max(0, Math.floor(r))) }) : t('top.credits');
-  return html`<div class="credits tb-credits ${tone}" data-tour="credits">
+  return html`<div class="credits tb-credits ${tone} ${d.plan ? 'has-plan' : ''}" data-tour="credits">
     <button type="button" class="credits-btn" data-action="shell.credits" aria-haspopup="menu" aria-expanded="false" data-tip-key="term.credits">
-      <span class="coin">${ui.icon('coin')}</span><span class="credits-txt"><small>${tone === 'is-red' ? t('top.lowBalance') : sub}</small><strong data-credits-value>${fmt.floor(shownBalance ?? b)}</strong></span></button>
+      <span class="coin">${ui.icon('coin')}</span><span class="credits-txt"><small>${tone === 'is-red' ? t('top.lowBalance') : sub}</small><strong data-credits-value>${fmt.floor(shownBalance ?? b)}</strong>${planLine}</span></button>
     <button type="button" class="btn btn-sm tb-topup ${tone ? 'btn-primary' : ''}" data-action="shell.credits.topup">${t('top.topup')}</button></div>`;
 }
 
@@ -201,13 +211,34 @@ function langMenu(anchor) {
   ui.menu(anchor, LANG_MENU.map((code) => ({ id: `shell.lang.${code}`, label: LANGS[code].label, checked: code === getLang(), lang: LANGS[code].html, onSelect: () => setLang(code) })), { label: t('top.langAria') });
 }
 
+/** Plain lines about the billing set-up (credits menu head; Billing and Settings use describeProfile too). */
+function profileLines(d) {
+  const lines = [t(d.modeKey)];
+  if (d.mode === 'postpaid') lines.push(t('bm.limitLine', { limit: fmt.int(d.creditLimit), days: d.paymentTermsDays }));
+  if (d.plan) {
+    const p = d.plan;
+    lines.push(t('bm.planLine', { min: fmt.int(p.committedMinutes), rate: fmt.rate(p.rate), charge: fmt.int(p.monthlyCharge), day: p.cycleStartDay }));
+    lines.push(t('bm.chip.plan', { min: fmt.int(p.committedMinutes), used: fmt.int(p.usedMinutes) }));
+    lines.push(t('bm.overageLine', { min: fmt.int(p.committedMinutes), rate: fmt.rate(p.rate) }));
+    lines.push(t(p.policyKey, { months: p.carryMonths }));
+  }
+  lines.push(t('bm.rate', { label: loc(d.rate.label) }));
+  return lines;
+}
+
 function creditsMenu(anchor) {
+  const sandbox = store.get('env') === 'sandbox';
+  const d = describeProfile();
+  const postpaid = !sandbox && d.mode === 'postpaid';
   ui.menu(anchor, [
-    { id: 'shell.credits.menu.topup', label: t('top.topup'), icon: 'coin', onSelect: () => ui.topup() },
+    postpaid
+      ? { id: 'shell.credits.invoice', label: t('bm.menu.invoice'), icon: 'file', href: '#/billing?section=invoices' }
+      : { id: 'shell.credits.menu.topup', label: t('top.topup'), icon: 'coin', onSelect: () => ui.topup() },
+    ...(d.plan && !sandbox ? [{ id: 'shell.credits.plan', label: t('bm.menu.plan'), icon: 'calendar', href: '#/billing?section=plan' }] : []),
     { id: 'shell.credits.prices', label: t('top.viewPrices'), icon: 'list', href: '#/billing?section=prices' },
-    { id: 'shell.credits.auto', label: t('top.autoTopup'), icon: 'refresh', href: '#/billing?panel=auto' },
+    ...(postpaid ? [] : [{ id: 'shell.credits.auto', label: t('top.autoTopup'), icon: 'refresh', href: '#/billing?panel=auto' }]),
     { id: 'shell.credits.limits', label: t('top.spendLimits'), icon: 'shield', href: '#/billing?panel=limits' },
-  ], { label: t('top.credits'), head: html`<div class="menu-head"><div class="hint-xs">${store.get('env') === 'sandbox' ? t('top.trialTip', trialVars()) : t('term.credits')}</div></div>` });
+  ], { label: t('top.credits'), head: html`<div class="menu-head">${sandbox ? html`<div class="hint-xs">${t('top.trialTip', trialVars())}</div>` : html`<ul class="menu-lines">${profileLines(d).map((l) => html`<li class="hint-xs">${l}</li>`)}</ul>`}</div>` });
 }
 
 function accountMenu(anchor) {
@@ -269,6 +300,10 @@ function openSwitchOrg() {
   });
 }
 
+// Demo panel › Billing mode: the four set-ups the team can show (a real account gets its terms from sales).
+const BILLING_PRESETS = ['prepaid', 'postpaid', 'prepaid-plan', 'postpaid-plan'];
+const currentPreset = () => { const p = billingProfile(); return `${p.mode}${p.plan ? '-plan' : ''}`; };
+
 function demoPanel(anchor) {
   const mode = store.get('mode');
   const h = ui.popover(anchor, {
@@ -281,6 +316,9 @@ function demoPanel(anchor) {
           <button type="button" data-action="demo.view.new" aria-pressed="${mode === 'firstRun'}">${t('account.viewNew')}</button>
           <button type="button" data-action="demo.view.active" aria-pressed="${mode === 'active'}">${t('account.viewActive')}</button></div>
           <span class="hint-xs">${t('demo.viewHint')}</span></div>
+        <div class="dp-row"><label class="label" for="demo-billing">${t('bm.preset.label')}</label>
+          <select class="select" id="demo-billing" data-demo="billing" data-action="demo.billing">${BILLING_PRESETS.map((p) => html`<option value="${p}" ${raw(p === currentPreset() ? 'selected' : '')}>${t(`bm.preset.${p.replace('-plan', 'Plan')}`, { min: fmt.int(PRICES.plans[0].minMinutes) })}</option>`)}</select>
+          <span class="hint-xs">${t('bm.preset.hint')}</span></div>
         <div class="dp-row"><label class="label" for="demo-outcome">${t('demo.outcome')}</label>
           <select class="select" id="demo-outcome" data-demo="outcome">${['answered', 'busy', 'no-answer', 'failed'].map((o) => html`<option value="${o}" ${raw(store.get('demo.outcome') === o ? 'selected' : '')}>${t(`dialer.out.${o}`)}</option>`)}</select></div>
         <div class="row">
@@ -297,7 +335,12 @@ function demoPanel(anchor) {
       'demo.tour': () => { h.close(); hooks.tour(); },
       'demo.announce': () => { h.close(); hooks.announce(); },
       'demo.reset': () => { h.close(); hooks.reset(); },
+      'demo.billing': () => {}, // the native list opens; the change handler below applies the choice
     },
+  });
+  if (h) on(h.el, 'change', '[data-demo="billing"]', (ev, el) => {
+    const d = (setBillingPreset(el.value), describeProfile());
+    ui.toast(t('bm.preset.set', { mode: t(d.modeKey) }), { kind: 'success', demo: true });
   });
   if (h) on(h.el, 'change', '[data-demo="outcome"]', (ev, el) => { store.set('demo.outcome', el.value); ui.toast(t('demo.outcomeSet', { outcome: t(`dialer.out.${el.value}`) }), { kind: 'success' }); });
 }

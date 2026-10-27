@@ -87,17 +87,20 @@ input[type="range"] { accent-color: var(--orange); }
 }
 @media (max-width: 1023px) {
   .wz-steps { grid-template-columns: repeat(5, minmax(44px, 1fr)); }
-  .wz-step { justify-content: center; padding: 8px 4px; }
+  .wz-step { justify-content: center; padding: 8px 4px; position: relative; }
   .wz-step:not(.is-current) .wz-lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .wz-step.is-current { grid-column: span 1; }
   .wz-grid, .wz-grid-wide { grid-template-columns: minmax(0, 1fr); }
 }
+@media (min-width: 768px) { .wz-cur { display: none; } }
 @media (max-width: 767px) {
   .cn-cards.g-2 { grid-template-columns: minmax(0, 1fr); }
   .cn-keyform { grid-template-columns: minmax(0, 1fr); }
   .cn-step { padding: var(--s-4); }
   .cn-existing { margin-left: 0; }
-  .wz-step.is-current .wz-lbl { display: none; }
+  /* Phone: the circles show numbers only; the current step's name moves into the "Step 1 of 5" line and the
+     label stays readable to screen readers. */
+  .wz-step.is-current .wz-lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .wz-auth.g-3 { grid-template-columns: minmax(0, 1fr); }
   .cn-cfg .wkv { grid-template-columns: minmax(0, 1fr) auto; }
   .cn-cfg .wkv > .hint { grid-column: 1 / -1; }

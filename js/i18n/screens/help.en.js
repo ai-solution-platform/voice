@@ -228,6 +228,11 @@ export default {
     '- **Answered calls only:** calls that are not answered, are busy or fail are not charged.',
     '- **Invoices:** you get a tax invoice for every top-up.',
     '- **Statements:** a monthly statement lists every call and charge.',
+    '## How you pay',
+    '- **Prepaid:** top up credits; calls draw from your balance. Auto top-up and a low-balance alert keep you running.',
+    '- **Postpaid:** one invoice a month, up to a credit limit set in your contract.',
+    '- **Commitment plan:** a monthly charge for a set number of minutes at the plan rate, added automatically each cycle. Minutes above it are billed at the same plan rate; unused minutes follow your contract (expire, roll over or carry over).',
+    'How you pay, and any plan, is agreed with sales in your contract. The contract also sets the credit rate (in this demo 1 credit = 1.00 baht).',
     'Outbound calls to Thai numbers cost {outbound} credits a minute; inbound calls {inbound}. Standard voices are included; premium voices add {premium} a minute.',
   ],
   'art.spending-limits': [

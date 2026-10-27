@@ -208,11 +208,11 @@ function historyCard(ctx) {
   return h`<section class="card al-hist" aria-labelledby="al-hist-h"><div class="card-head"><h2 id="al-hist-h">${t('hist.title')}</h2>
       <button type="button" class="btn btn-sm" data-action="al.ev.ackall" ${raw(open ? '' : 'aria-disabled="true" aria-describedby="al-ackall-h"')}>${t('ev.ackAll')}</button>
       ${open ? '' : h`<span class="hint-xs" id="al-ackall-h">${t('hist.noneOpen')}</span>`}</div>
-    ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('hist.time')}</th><th>${t('hist.rule')}</th><th>${t('hist.details')}</th><th>${t('hist.sentTo')}</th><th>${t('hist.status')}</th><th><span class="sr-only">${t('hist.actions')}</span></th></tr></thead>
+    ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('hist.time')}</th><th>${t('hist.rule')}</th><th>${t('hist.details')}</th><th>${t('hist.sentTo')}</th><th>${t('hist.status')}</th></tr></thead>
       <tbody>${list.map((a) => h`<tr class="${ctx.state.fresh === a.id ? 'new-row' : ''}"><td class="nowrap mono">${fmt.dayMonth(a.at)} ${fmt.timeShort(a.at)}</td>
-        <td class="strong nowrap">${a.rule === 'test' ? t('hist.testRule') : t(`type.${a.rule}`)}</td><td class="al-details">${details(a)}</td>
+        <td class="strong nowrap">${a.rule === 'test' ? t('hist.testRule') : t(`type.${a.rule}`)}<span class="hint-xs mono al-time-m">${fmt.dayMonth(a.at)} ${fmt.timeShort(a.at)}</span></td><td class="al-details">${details(a)}${a.rule === 'failure-rate' || a.rule === 'trunk-down' || a.status === 'open' ? h`<span class="row-tight al-acts" role="group" aria-label="${t('hist.actions')}">${actions(a)}</span>` : ''}</td>
         <td><span class="row-tight" style="flex-wrap:wrap">${(a.sentTo || []).map((c) => h`<span class="chip">${t(`ch.${c}`)}</span>`)}</span></td>
-        <td><span class="stack" style="gap:2px;align-items:flex-start">${status(a)}</span></td><td class="num nowrap"><span class="row-tight" style="justify-content:flex-end">${actions(a)}</span></td></tr>`)}</tbody></table></div>`
+        <td><span class="stack" style="gap:2px;align-items:flex-start">${status(a)}</span></td></tr>`)}</tbody></table></div>`
     : h`<div class="empty"><span class="art">${icon('check-circle')}</span><strong>${t('hist.empty')}</strong><span class="hint">${t('hist.emptyHint')}</span></div>`}</section>`;
 }
 

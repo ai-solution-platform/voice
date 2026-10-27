@@ -9,7 +9,7 @@ import { raw, reducedMotion } from '../core/dom.js';
 import { newId, audit, notify, spend, balance } from '../core/actions.js';
 import { tIn, getLang, LANGS, LANG_ORDER, loc } from '../core/i18n.js';
 import { store } from '../core/store.js';
-import { nowMs, at as atToday, on as onDay } from '../data/clock.js';
+import { nowMs, at as atToday, on as onDay, TZ } from '../data/clock.js';
 import { PRICES, billedMinutes, comparePlans } from '../data/prices.js';
 import { CLINIC } from '../data/active.js';
 import { SANDBOX_CALLER } from '../data/edge.js';
@@ -62,8 +62,9 @@ const STEPS = 4;
 const COLUMNS = ['phone', 'name', 'date', 'time', 'clinic', 'slot'];
 const SCRIPT_OF = { bc_01JBK7C1Q2: 'delivery', bc_01JBJ9HC2W: 'reminder', bc_01JBKR28XP: 'pickup', bc_01JBKF7V3N: 'reminder', bc_01JBHD26OC: 'delivery', bc_01JBFD24OC: 'delivery' };
 const DAY_KEYS = [1, 2, 3, 4, 5, 6, 0];          // Mon … Sun (Date.getDay values)
-const TRANSFER_MINUTES = [3, 5, 10]; // talk time a transferred call may use (the ceiling of a call)
-const TRANSFER_DEFAULT = 5;
+// The customer's own, optional limit on talk time after a transfer to their staff (0 = no limit, the default).
+// With no limit a campaign that can transfer has no ceiling: transferred calls are billed for their full length.
+const TRANSFER_MINUTES = [0, 3, 5, 10];
 const MAX_REPEATS = 2;
 const RUN_TICKS = 90;                            // 90 × 500 ms ≈ 45 s for the whole list
 const TICK_MS = 500;
@@ -306,19 +307,28 @@ function answerRate(k) {
   return fin ? (k.answered / fin) * 100 : null;
 }
 const isTransfer = (a) => a === 'transfer' || a === 'staff';
-/** Dates in sentences: Thai shows the Buddhist year (tables keep fmt.date / fmt.dateTime). */
+/** Short date + time in the campaign list: Thai shows the Buddhist year (26 ต.ค. 2569 11:42), as the detail page does. */
+let thaiShortFmt = null;
+const dtShort = (ctx, d) => {
+  if (getLang() !== 'th') return ctx.fmt.dateTime(d);
+  if (!thaiShortFmt) thaiShortFmt = new Intl.DateTimeFormat('th-TH', { timeZone: TZ, day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return thaiShortFmt.format(new Date(d));
+};
+/** Dates in sentences: Thai shows the Buddhist year. */
 const dtProse = (ctx, d, long = false) => ctx.t('dt', { date: ctx.fmt.dateProse(d, long), time: ctx.fmt.timeShort(d) });
 /**
- * The paths a call can take through the script, so "up to" is a real ceiling: the message alone; the message
- * repeated (at most MAX_REPEATS times); or the message and a transfer to staff (talk time capped at transferMin).
+ * The paths a call can take through the script: the message alone; the message repeated (at most MAX_REPEATS times);
+ * or the message and a transfer to staff. "Up to" is a real ceiling only when every path is bounded, so a transfer
+ * without the customer's talk-time limit makes the estimate unbounded (shown as "≈" with a note, never as "up to").
  */
 function pathsOf({ sec, actions, transferMin }) {
   const baseSec = sec + 2;
   const hasRepeat = actions.includes('repeat');
   const hasTransfer = actions.some(isTransfer);
-  const capMin = transferMin || TRANSFER_DEFAULT;
-  const maxSec = Math.max(baseSec, hasRepeat ? sec * (1 + MAX_REPEATS) + 2 : 0, hasTransfer ? baseSec + capMin * 60 : 0);
-  return { baseSec, maxSec, hasRepeat, hasTransfer, hasSms: actions.includes('sms-link'), capMin };
+  const capMin = Number(transferMin) || 0;
+  const unbounded = hasTransfer && !capMin;
+  const maxSec = Math.max(baseSec, hasRepeat ? sec * (1 + MAX_REPEATS) + 2 : 0, hasTransfer && capMin ? baseSec + capMin * 60 : 0);
+  return { baseSec, maxSec, hasRepeat, hasTransfer, hasSms: actions.includes('sms-link'), capMin, unbounded };
 }
 /** The last completed campaign of the same sub-account: its answer rate, credits per answered call and key shares. */
 function lastSimilar(subId) {
@@ -338,13 +348,17 @@ function estimateFor(w, subId) {
   const perMin = PRICES.outbound + (w.voice === 'premium' ? PRICES.premiumVoice : 0);
   const perCall = round2(minutes * perMin);
   const perCallMax = round2(maxMinutes * perMin);
-  const max = round2(toCall * perCallMax);
+  const max = p.unbounded ? null : round2(toCall * perCallMax);
   const last = lastSimilar(subId);
   // Expected: the answer rate of the last similar campaign; when calls can run longer (transfer, repeat), its real
   // credits per answered call too (scaled to this campaign's per-minute price, never above the ceiling).
   const useAvg = (p.hasTransfer || p.hasRepeat) && last.avg;
-  const perAnswered = useAvg ? Math.min(perCallMax, Math.max(perCall, round2(last.avg * perMin / PRICES.outbound))) : perCall;
-  const expected = Math.min(max, round2(toCall * (last.pct / 100) * perAnswered));
+  const scaled = useAvg ? Math.max(perCall, round2(last.avg * perMin / PRICES.outbound)) : perCall;
+  const perAnswered = p.unbounded ? scaled : Math.min(perCallMax, scaled);
+  const rawExpected = round2(toCall * (last.pct / 100) * perAnswered);
+  const expected = max == null ? rawExpected : Math.min(max, rawExpected);
+  // "head": the figure the confirmation, the button and the limit checks use — the ceiling, or ≈ expected without one.
+  const head = max == null ? expected : max;
   // SMS links: one per answered call at most; expected from the last campaign's share of that key.
   const smsKey = (w.keys.find((k) => k.action === 'sms-link') || {}).key;
   const lastShare = smsKey && last.c && last.c.keys && last.c.keys[smsKey] === 'sms-link' && last.k && last.k.keys && last.k.answered ? (last.k.keys[smsKey] || 0) / last.k.answered : null;
@@ -353,7 +367,7 @@ function estimateFor(w, subId) {
   const bal = balance();
   const usedToday = store.get('mode') === 'active' ? (store.get('billing.usedToday.total') || 0) : 0;
   const daily = store.get('limits.daily') || 0;
-  return { toCall, sec, minutes, maxMinutes, paths: p, perMin, perCall, perCallMax, max, expected, usedAvg: !!useAvg && perAnswered > perCall, avg: useAvg ? round2(perAnswered) : null, smsMax, smsExpected, pct: last.pct, lastName: last.name, balanceAfter: round2(bal - expected), balanceAfterMax: round2(bal - max), usedToday, daily, dailyAfter: round2(usedToday + max), short: max > bal ? Math.ceil((max - bal) / 100) * 100 : 0, overDaily: daily && usedToday + max > daily, plan: comparePlans(toCall * minutes) };
+  return { toCall, sec, minutes, maxMinutes, paths: p, perMin, perCall, perCallMax, max, expected, usedAvg: !!useAvg && perAnswered > perCall, avg: useAvg ? round2(perAnswered) : null, smsMax, smsExpected, pct: last.pct, lastName: last.name, head, unbounded: p.unbounded, balanceAfter: round2(bal - expected), balanceAfterMax: max == null ? null : round2(bal - max), usedToday, daily, dailyAfter: round2(usedToday + head), short: head > bal ? Math.ceil((head - bal) / 100) * 100 : 0, overDaily: daily && usedToday + head > daily, plan: comparePlans(toCall * minutes) };
 }
 
 // ---------- the run engine (module level: a campaign keeps calling while you look at other screens) ----------
@@ -394,7 +408,7 @@ function attemptCost(run, o, i) {
   if (o.cat !== 'completed') return { sec: 0, billed: 0, credits: 0, act: null };
   const act = o.key ? run.actions[o.key] || null : null;
   let extra = 0;
-  if (isTransfer(act)) extra = Math.min(run.transferMin * 60, 45 + ((i * 53) % 190));
+  if (isTransfer(act)) extra = run.transferMin ? Math.min(run.transferMin * 60, 45 + ((i * 53) % 190)) : 45 + ((i * 53) % 190);
   else if (act === 'repeat' && i % 2) extra = run.msgSec;
   const billed = extra ? billedMinutes(run.baseSec + extra) : run.minutes;
   return { sec: o.sec + extra, billed, credits: round2(billed * run.perMin), act };
@@ -437,7 +451,7 @@ function startRun(c, { est, ui, t }) {
   const run = {
     id: c.id, total, order: outcomeOrder(total, hash(c.id) ^ total), dialled: 0, finished: 0, paused: false, stopped: false, spent: 0, due: 0, billed: 0,
     at: [], callIds: [], timer: null, step: Math.max(1, Math.ceil(total / RUN_TICKS)), conc: Math.min(c.concurrent || 20, 20), sub: c.sub, callerId: c.callerId,
-    minutes: est.minutes, perMin: est.perMin, msgSec: est.sec, baseSec: est.sec + 2, transferMin: c.transferMin || TRANSFER_DEFAULT, actions: c.keys || {}, kind: (c.script && c.script.kind) || 'reminder',
+    minutes: est.minutes, perMin: est.perMin, msgSec: est.sec, baseSec: est.sec + 2, transferMin: Number(c.transferMin) || 0, actions: c.keys || {}, kind: (c.script && c.script.kind) || 'reminder',
   };
   RUNS.set(c.id, run);
   run.timer = setInterval(() => tick(run), TICK_MS);
@@ -587,9 +601,9 @@ function countsOf(c) {
 function campaignEstimate(c) {
   const p = pathsOf({ sec: c.messageSec || 26, actions: Object.values(c.keys || {}), transferMin: c.transferMin });
   const perMin = PRICES.outbound + (c.script && c.script.premium ? PRICES.premiumVoice : 0);
-  const ceiling = round2((c.toCall || 0) * billedMinutes(p.maxSec) * perMin);
-  const seed = c.estimate && c.estimate.max != null ? c.estimate : null;
-  if (seed) return { ...seed, max: Math.max(seed.max, ceiling), paths: p, longest: billedMinutes(p.maxSec) };
+  const ceiling = p.unbounded ? null : round2((c.toCall || 0) * billedMinutes(p.maxSec) * perMin);
+  const seed = c.estimate && c.estimate.expected != null ? c.estimate : null;
+  if (seed) return { ...seed, max: ceiling == null ? null : Math.max(seed.max || 0, ceiling), paths: p, longest: billedMinutes(p.maxSec) };
   const perCall = perMin * billedMinutes(p.baseSec);
   return { max: ceiling, expected: round2((c.toCall || 0) * perCall * 0.64), paths: p, longest: billedMinutes(p.maxSec) };
 }
@@ -644,10 +658,10 @@ function listRow(ctx, c) {
   const answeredPct = answerRate(k);
   let when;
   if (c.status === 'running' || c.status === 'paused') when = t('when.running', { start: fmt.timeShort(c.startedAt), end: c.expectedFinish ? fmt.timeShort(c.expectedFinish) : '—' });
-  else if (c.status === 'scheduled') when = t('when.scheduled', { at: fmt.dateTime(c.scheduledFor) });
+  else if (c.status === 'scheduled') when = t('when.scheduled', { at: dtShort(ctx, c.scheduledFor) });
   else if (c.status === 'draft') when = t('when.draft', { date: fmt.dayMonth(c.savedAt || nowMs()), name: c.savedBy || '' });
-  else when = fmt.dateTime(c.finishedAt || c.canceledAt || c.startedAt || nowMs());
-  const credits = ['draft', 'scheduled'].includes(c.status) ? t('credits.upTo', { n: fmt.credits2(est.max) }) : fmt.credits2(k.credits || c.credits || 0);
+  else when = dtShort(ctx, c.finishedAt || c.canceledAt || c.startedAt || nowMs());
+  const credits = ['draft', 'scheduled'].includes(c.status) ? (est.max == null ? t('credits.about', { n: fmt.credits2(est.expected) }) : t('credits.upTo', { n: fmt.credits2(est.max) })) : fmt.credits2(k.credits || c.credits || 0);
   return h`<tr class="${c.fresh ? 'new-row' : ''}">
     <td class="cp-name"><a href="#/campaigns/${['draft', 'scheduled'].includes(c.status) ? `new?draft=${c.id}` : c.id}" data-action="cp.row" data-value="${c.id}" class="strong">${loc(c.name)}</a>
       <span class="hint-xs mono" translate="no">${c.id}</span></td>
@@ -754,7 +768,7 @@ function freshWizard(draft) {
     keys: draft && draft.keys ? Object.entries(draft.keys).map(([k, a]) => ({ key: k, action: a === 'staff' ? 'transfer' : a })) : [{ key: '1', action: 'confirm' }, { key: '2', action: 'sms-link' }, { key: '9', action: 'opt-out' }],
     start: draft && draft.status === 'scheduled' ? 'schedule' : 'now', date: draft && draft.scheduledFor ? isoDateOf(draft.scheduledFor) : '2026-10-28', time: draft && draft.scheduledFor ? hhmmOf(Date.parse(draft.scheduledFor)) : '10:00',
     hoursFrom: '09:00', hoursTo: '18:00', days: [1, 2, 3, 4, 5, 6], retries: draft && draft.retries != null ? draft.retries : 2, wait: draft && draft.retryAfterMin ? draft.retryAfterMin : 30,
-    cps: PRICES.cpsDefault, conc: draft && draft.concurrent ? draft.concurrent : 20, cap: 1, transferMin: (draft && draft.transferMin) || TRANSFER_DEFAULT, dnc: 'idle', typed: '', launching: null, playing: false, scheduledStatus: draft ? draft.status : null,
+    cps: PRICES.cpsDefault, conc: draft && draft.concurrent ? draft.concurrent : 20, cap: 1, transferMin: (draft && Number(draft.transferMin)) || 0, dnc: 'idle', typed: '', launching: null, playing: false, scheduledStatus: draft ? draft.status : null,
   };
   return base;
 }
@@ -892,8 +906,8 @@ function step2(ctx, w) {
           ${w.purpose === 'marketing' && k.key === '9' ? h`<span class="hint-xs" id="cp-optout-lock">${t('s2.optOutLocked')}</span>` : h`<button type="button" class="btn btn-ghost btn-sm btn-icon" data-action="wc.2.keyremove" data-value="${i}" aria-label="${t('s2.keyRemove', { key: k.key })}">${icon('trash', 'ico-sm')}</button>`}</div>`)}
           ${w.keys.some((k) => k.action === 'sms-link') ? h`<p class="hint-xs">${t('s2.smsNote')}</p>` : ''}
           ${w.keys.some((k) => isTransfer(k.action)) ? h`<div class="row-tight cp-tcap"><label class="hint-xs" for="cp-tcap">${t('s2.transferCap')}</label>
-            <select class="select cp-tcap-sel" id="cp-tcap" data-field="wcTransferMin" data-action="wc.2.transfermin" aria-describedby="cp-tcap-h">${TRANSFER_MINUTES.map((m) => h`<option value="${m}" ${raw(m === (w.transferMin || TRANSFER_DEFAULT) ? 'selected' : '')}>${t('s2.transferCapN', { n: m })}</option>`)}</select></div>
-            <p class="hint-xs" id="cp-tcap-h">${t('s2.transferNote')}</p>` : ''}
+            <select class="select cp-tcap-sel" id="cp-tcap" data-field="wcTransferMin" data-action="wc.2.transfermin" aria-describedby="cp-tcap-h">${TRANSFER_MINUTES.map((m) => h`<option value="${m}" ${raw(m === (Number(w.transferMin) || 0) ? 'selected' : '')}>${m ? t('s2.transferCapN', { n: m }) : t('s2.transferNoLimit')}</option>`)}</select></div>
+            <p class="hint-xs" id="cp-tcap-h">${Number(w.transferMin) ? t('s2.transferNote', { n: w.transferMin }) : t('s2.transferNoLimitNote')}</p>` : ''}
           ${w.keys.some((k) => k.action === 'repeat') ? h`<p class="hint-xs">${t('s2.repeatNote', { n: MAX_REPEATS })}</p>` : ''}
           ${free.length ? h`<button type="button" class="btn btn-sm" data-action="wc.2.keys">${icon('plus', 'ico-sm')}${t('s2.keyAdd', { key: free[0] })}</button>` : ''}</div></div>
     </div>
@@ -905,7 +919,7 @@ function step2(ctx, w) {
           <button type="button" class="optcard" data-action="wc.2.voice" data-value="premium" aria-pressed="${w.voice === 'premium'}"><span class="t">${t('s2.premium')}</span><span class="h">${t('s2.premiumH', { rate: fmt.rate(PRICES.premiumVoice) })}</span></button></div>
         ${w.voice === 'premium' ? h`<p class="hint-xs cp-price">${t('s2.premiumLine', { rate: fmt.rate(PRICES.premiumVoice) })}</p>` : ''}</div>
       <label class="field"><span class="label">${t('s2.gender')}</span><select class="select" data-field="wcGender"><option value="female" ${raw(w.gender === 'female' ? 'selected' : '')}>${t('s2.female', { lang: LANGS[w.lang].label })}</option><option value="male" ${raw(w.gender === 'male' ? 'selected' : '')}>${t('s2.male', { lang: LANGS[w.lang].label })}</option></select></label>
-      <label class="field"><span class="label">${t('s2.rate')} <output class="mono" data-rate-out>${fmt.num(w.rate, 2)}×</output></span><input type="range" min="0.8" max="1.2" step="0.05" value="${w.rate}" data-field="wcRate" data-action="wc.2.rate" aria-valuetext="${fmt.num(w.rate, 2)}"></label>
+      <div class="field"><span class="label"><span id="cp-rate-l">${t('s2.rate')}</span> <output class="mono" data-rate-out for="cp-rate">${fmt.num(w.rate, 2)}×</output></span><input type="range" id="cp-rate" min="0.8" max="1.2" step="0.05" value="${w.rate}" data-field="wcRate" data-action="wc.2.rate" aria-labelledby="cp-rate-l" aria-valuetext="${fmt.num(w.rate, 2)}×"></div>
       <div class="stack" style="gap:6px"><span class="label">${t('s2.previewRow')}</span><p class="cp-say" lang="${LANGS[w.lang].html}" data-say>${w.mode === 'audio' ? (w.audioFile ? w.audioFile.name : '—') : preview}</p>
         <div class="row"><button type="button" class="btn ${w.playing ? '' : 'btn-navy'}" data-action="wc.2.play" ${raw(w.mode === 'audio' && !w.audioFile ? 'aria-disabled="true" aria-describedby="cp-play-help"' : '')}>${icon(w.playing ? 'stop' : 'play', 'ico-sm')}${w.playing ? t('s2.stop') : t('s2.play')}</button>
           ${w.mode === 'audio' && !w.audioFile ? h`<span class="hint-xs" id="cp-play-help">${t('s2.playNeedsFile')}</span>` : ''}</div>
@@ -1019,7 +1033,7 @@ function step4(ctx, w) {
           <div class="row"><button type="button" class="btn btn-sm btn-primary" data-action="wc.golive">${t('top.goLive')}</button>
           <button type="button" class="btn btn-sm" data-action="wc.testme">${icon('phone', 'ico-sm')}${t('s4.testMe')}</button></div></div></div>` : ''}
       ${!sandbox ? h`<div class="card card-pad cp-confirm" id="cp-confirm">
-        <label class="field"><span class="label">${t('s4.typeLabel', { token, n: fmt.int(e.toCall), max: fmt.credits2(e.max) })}${e.smsMax ? ` ${t('s4.typeSms', { sms: fmt.int(e.smsMax) })}` : ''}</span>
+        <label class="field"><span class="label">${e.max == null ? t('s4.typeLabelAbout', { token, n: fmt.int(e.toCall), exp: fmt.credits2(e.expected) }) : t('s4.typeLabel', { token, n: fmt.int(e.toCall), max: fmt.credits2(e.max) })}${e.smsMax ? ` ${t('s4.typeSms', { sms: fmt.int(e.smsMax) })}` : ''}</span>
           <input class="input mono cp-typed ${ok ? 'is-ok' : ''}" data-field="wcTyped" data-action="wc.4.confirm" value="${w.typed}" inputmode="numeric" autocomplete="off" spellcheck="false" aria-describedby="cp-typed-hint" placeholder="${token}"></label>
         <span class="hint-xs" id="cp-typed-hint">${ok ? t('s4.typedOk') : t('confirm.typedHint')}</span>
         ${w.launching != null ? h`<ol class="cp-launchseq" aria-live="polite">${['check', 'reserve', 'start'].map((k, i) => h`<li class="${i < w.launching ? 'is-done' : i === w.launching ? 'is-run' : ''}">${i < w.launching ? icon('check-circle', 'ico-sm') : i === w.launching ? raw('<span class="spin" aria-hidden="true"></span>') : icon('dot', 'ico-sm')}${t(`s4.seq.${k}`)}</li>`)}</ol>` : ''}
@@ -1037,18 +1051,20 @@ function costCard(ctx, w, e) {
       <div class="kv"><span class="k">${t('cost.recipients')}</span><span class="v">${fmt.int(e.toCall)}</span></div>
       ${a ? h`<p class="hint-xs cp-cost-sub">${t('cost.removed', { dups: fmt.int(a.duplicates), dnc: fmt.int(a.dnc) })}</p>` : ''}
       <div class="kv"><span class="k">${ctx.term(t('cost.billed'), 'billing_minute')}</span><span class="v">${t('cost.billedV', { count: e.minutes, sec: e.sec })}</span></div>
-      ${e.maxMinutes > e.minutes ? h`<div class="kv"><span class="k">${t('cost.longest')}</span><span class="v">${t('cost.longestV', { count: e.maxMinutes })}</span></div>
-        <p class="hint-xs cp-cost-sub">${e.paths.hasTransfer ? t('cost.longestTransfer', { n: e.paths.capMin }) : t('cost.longestRepeat', { n: MAX_REPEATS })}</p>` : ''}
+      ${e.max != null && e.maxMinutes > e.minutes ? h`<div class="kv"><span class="k">${t('cost.longest')}</span><span class="v">${t('cost.longestV', { count: e.maxMinutes })}</span></div>
+        <p class="hint-xs cp-cost-sub">${e.paths.hasTransfer && e.paths.capMin ? t('cost.longestTransfer', { n: e.paths.capMin }) : t('cost.longestRepeat', { n: MAX_REPEATS })}</p>` : ''}
       <div class="kv"><span class="k">${t('cost.rate')}</span><span class="v">${t('cost.rateV', { rate: fmt.rate(PRICES.outbound) })}${w.voice === 'premium' ? h`<br><span class="hint-xs">${t('cost.premium', { rate: fmt.rate(PRICES.premiumVoice) })}</span>` : ''}</span></div>
-      <div class="kv kv-total"><span class="k">${e.maxMinutes > e.minutes ? t('cost.maxLong') : t('cost.max')}</span><span class="v" data-cost-max>${fmt.credits2(e.max)}</span></div>
-      <div class="kv"><span class="k">${t('cost.expected', { pct: fmt.pct(e.pct) })}</span><span class="v">≈ ${fmt.credits2(e.expected)}</span></div>
+      ${e.max == null ? h`<div class="kv kv-total"><span class="k">${t('cost.expected', { pct: fmt.pct(e.pct) })}</span><span class="v" data-cost-max>≈ ${fmt.credits2(e.expected)}</span></div>
+        <p class="note note-warn cp-noceil" role="note">${icon('alert')}<span>${t('cost.noCeiling')}</span></p>`
+      : h`<div class="kv kv-total"><span class="k">${e.maxMinutes > e.minutes ? t('cost.maxLong') : t('cost.max')}</span><span class="v" data-cost-max>${fmt.credits2(e.max)}</span></div>
+      <div class="kv"><span class="k">${t('cost.expected', { pct: fmt.pct(e.pct) })}</span><span class="v">≈ ${fmt.credits2(e.expected)}</span></div>`}
       ${e.lastName ? h`<p class="hint-xs cp-cost-sub">${t('cost.expectedFrom', { name: loc(e.lastName) })}${e.usedAvg ? ` ${t('cost.expectedAvg', { avg: fmt.rate(e.avg) })}` : ''}</p>` : ''}
       ${e.smsMax ? h`<div class="kv"><span class="k">${t('cost.sms')}</span><span class="v">${e.smsExpected != null ? t('cost.smsV', { max: fmt.int(e.smsMax), exp: fmt.int(e.smsExpected) }) : t('cost.smsVMax', { max: fmt.int(e.smsMax) })}</span></div>
         <p class="hint-xs cp-cost-sub">${t('cost.smsHint')}</p>` : ''}
       <div class="kv"><span class="k">${t('cost.balanceAfter')}</span><span class="v">≈ ${fmt.credits2(e.balanceAfter)}</span></div>
-      <p class="hint-xs cp-cost-sub">${t('cost.balanceAfterMax', { n: fmt.credits2(e.balanceAfterMax) })}</p>
+      ${e.balanceAfterMax != null ? h`<p class="hint-xs cp-cost-sub">${t('cost.balanceAfterMax', { n: fmt.credits2(e.balanceAfterMax) })}</p>` : ''}
       ${e.daily ? h`<div class="kv"><span class="k">${t('cost.daily', { limit: fmt.int(e.daily) })}</span><span class="v ${e.overDaily ? 'err-text' : 'ok-text'}">${e.overDaily ? t('cost.dailyOver') : t('cost.dailyOk')}</span></div>
-        <p class="hint-xs cp-cost-sub">${t('cost.dailyLine', { today: fmt.credits2(e.usedToday), max: fmt.credits2(e.max), after: fmt.credits2(e.dailyAfter), limit: fmt.int(e.daily) })}</p>` : ''}
+        <p class="hint-xs cp-cost-sub">${t(e.max == null ? 'cost.dailyLineAbout' : 'cost.dailyLine', { today: fmt.credits2(e.usedToday), max: fmt.credits2(e.head), after: fmt.credits2(e.dailyAfter), limit: fmt.int(e.daily) })}</p>` : ''}
       ${e.short ? h`<div class="note note-err" role="alert">${icon('alert-circle')}<div class="grow">${t('cost.short', { n: fmt.int(e.short) })} <button type="button" class="linkbtn" data-action="wc.4.topup">${t('top.topup')}</button></div></div>` : ''}
       ${e.overDaily ? h`<div class="note note-warn">${icon('alert')}<div class="grow">${t('cost.overDaily', { limit: fmt.int(e.daily) })} <button type="button" class="linkbtn" data-action="wc.4.limits">${t('cost.raise')}</button></div></div>` : ''}
       ${e.plan.suggestPlan && env() === 'live' ? h`<p class="hint-xs">${t('cost.planLine', { min: fmt.int(e.plan.suggestPlan.plan.minMinutes), cost: fmt.int(e.plan.suggestPlan.cost) })}</p>` : ''}
@@ -1056,16 +1072,22 @@ function costCard(ctx, w, e) {
     </div></aside>`;
 }
 
+/** "Launch · up to X credits", or "Launch · ≈ X credits, no ceiling" when transfers have no limit (+ SMS when links are sent). */
+function btnLabel(ctx, e, kind) {
+  const { t, fmt } = ctx;
+  const base = e.max == null ? t(kind === 'schedule' ? 's4.scheduleBtnAbout' : 's4.launchAbout', { exp: fmt.credits2(e.expected) }) : t(kind === 'schedule' ? 's4.scheduleBtn' : 's4.launch', { max: fmt.credits2(e.max) });
+  return e.smsMax ? `${base} ${t('s4.plusSms')}` : base;
+}
 function launchButton(ctx, w) {
   const { t, html: h, icon, fmt } = ctx;
   const e = estimateFor(w, subOfCid(w.cid));
   const sandbox = env() === 'sandbox';
   const ok = !sandbox && normalizeTyped(w.typed) === normalizeTyped(String(e.toCall)) && e.toCall > 0;
   if (w.start === 'schedule') {
-    return h`<button type="button" class="btn btn-primary" data-action="wc.launch" ${raw(ok ? '' : 'aria-disabled="true" aria-describedby="cp-launch-help"')}>${icon('calendar', 'ico-sm')}${t(e.smsMax ? 's4.scheduleBtnSms' : 's4.scheduleBtn', { max: fmt.credits2(e.max) })}</button>
+    return h`<button type="button" class="btn btn-primary" data-action="wc.launch" ${raw(ok ? '' : 'aria-disabled="true" aria-describedby="cp-launch-help"')}>${icon('calendar', 'ico-sm')}${btnLabel(ctx, e, 'schedule')}</button>
       ${ok ? '' : h`<span class="hint-xs cp-launch-help" id="cp-launch-help">${sandbox ? t('s4.sandboxShort') : t('s4.typeFirst', { token: e.toCall })}</span>`}`;
   }
-  return h`<button type="button" class="btn btn-primary cp-launch" data-action="wc.launch" ${raw(ok ? '' : 'aria-disabled="true" aria-describedby="cp-launch-help"')} ${raw(w.launching != null ? 'aria-busy="true"' : '')}>${w.launching != null ? raw('<span class="spin" aria-hidden="true"></span>') : icon('rocket', 'ico-sm')}${t(e.smsMax ? 's4.launchSms' : 's4.launch', { max: fmt.credits2(e.max) })}</button>
+  return h`<button type="button" class="btn btn-primary cp-launch" data-action="wc.launch" ${raw(ok ? '' : 'aria-disabled="true" aria-describedby="cp-launch-help"')} ${raw(w.launching != null ? 'aria-busy="true"' : '')}>${w.launching != null ? raw('<span class="spin" aria-hidden="true"></span>') : icon('rocket', 'ico-sm')}${btnLabel(ctx, e, 'launch')}</button>
     ${ok ? '' : h`<span class="hint-xs cp-launch-help" id="cp-launch-help">${sandbox ? t('s4.sandboxShort') : t('s4.typeFirst', { token: e.toCall })}</span>`}`;
 }
 
@@ -1181,7 +1203,7 @@ function launch(ctx, w) {
       rec.progress = { dialled: 0, answered: 0, noAnswer: 0, busy: 0, failed: 0, inProgress: 0, queued: rec.toCall };
     }
     upsert(rec);
-    audit(scheduled ? 'campaign.scheduled' : 'campaign.launched', { numbers: rec.toCall, max: e.max, token: String(rec.toCall) }, rec.id);
+    audit(scheduled ? 'campaign.scheduled' : 'campaign.launched', { numbers: rec.toCall, max: e.max, expected: e.expected, token: String(rec.toCall) }, rec.id);
     if (!scheduled) startRun(findCamp(rec.id), { est: e, ui: ctx.ui, t: ctx.t });
     ctx.ui.toast(scheduled ? t('toastScheduled', { name: loc(rec.name), at: dtProse(ctx, rec.scheduledFor) }) : t('toast.T20', { name: loc(rec.name) }), { kind: 'success' });
     ctx.state.wz = null;
@@ -1298,18 +1320,21 @@ function paceOf(c, k) {
   if (!['running', 'paused'].includes(c.status) || !fin || !k.total) return null;
   return round2(((k.credits != null ? k.credits : c.credits || 0) / fin) * k.total);
 }
+/** What the whole list should cost: the ceiling, or (no ceiling) the current pace, else the launch estimate. */
+const wholeOf = (est, pace) => (est.max != null ? est.max : pace != null ? pace : est.expected || 0);
 function costSummary(ctx, c, k, est) {
   const { t, html: h, fmt } = ctx;
   const used = k.credits != null ? k.credits : c.credits || 0;
-  const pctUsed = est.max ? Math.min(100, Math.round((used / est.max) * 100)) : 0;
   const pace = paceOf(c, k);
+  const whole = wholeOf(est, pace);
+  const pctUsed = whole ? Math.min(100, Math.round((used / whole) * 100)) : 0;
   return h`<section class="card cp-costsum" aria-labelledby="cp-cs-h"><div class="card-head"><h3 id="cp-cs-h">${t('d.cost')}</h3><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('plannedShort')}</span></div>
-    <div class="card-body stack-3"><div class="row" style="align-items:baseline;gap:6px"><span class="cp-big tnum" data-used>${fmt.credits2(used)}</span><span class="hint">/ ${t('credits.upTo', { n: fmt.credits2(est.max) })}</span></div>
+    <div class="card-body stack-3"><div class="row" style="align-items:baseline;gap:6px"><span class="cp-big tnum" data-used>${fmt.credits2(used)}</span><span class="hint" data-whole>/ ${est.max == null ? t('credits.aboutTotal', { n: fmt.credits2(whole) }) : t('credits.upTo', { n: fmt.credits2(est.max) })}</span></div>
       <span class="progress" aria-hidden="true"><i data-used-bar style="width:${pctUsed}%"></i></span>
       <div class="kv"><span class="k">${ctx.term(t('d.billedMin'), 'billing_minute')}</span><span class="v tnum" data-billed>${fmt.int(c.billedMin != null ? c.billedMin : k.answered)}</span></div>
       ${est.expected ? h`<div class="kv"><span class="k">${t('d.expectedCost')}</span><span class="v tnum">≈ ${fmt.credits2(est.expected)}</span></div>` : ''}
       ${pace != null ? h`<div class="kv"><span class="k">${t('d.paceCost')}</span><span class="v tnum" data-pace>≈ ${fmt.credits2(pace)}</span></div>` : ''}
-      ${est.paths && est.paths.hasTransfer ? h`<p class="hint-xs">${t('d.transferNote', { n: est.paths.capMin })}</p>` : ''}
+      ${est.paths && est.paths.unbounded ? h`<p class="hint-xs">${t('d.noCeiling')}</p>` : est.paths && est.paths.hasTransfer ? h`<p class="hint-xs">${t('d.transferNote', { n: est.paths.capMin })}</p>` : ''}
       <div class="kv"><span class="k">${t('d.settings')}</span><span class="v">${t('d.settingsV', { cps: c.cps || 2, conc: c.concurrent || 20, retries: c.retries != null ? c.retries : 2, wait: c.retryAfterMin || 30 })}</span></div>
       <p class="hint-xs">${t('cost.foot')}</p>
       <div><button type="button" class="btn btn-sm" data-action="cd.play">${ctx.icon('play', 'ico-sm')}${t('d.playMsg')}</button></div></div></section>`;
@@ -1424,7 +1449,9 @@ function patchDetail(root, ctx, c) {
   }
   const used = root.querySelector('[data-used]'); if (used) used.textContent = fmt.credits2(k.credits || 0);
   const est = campaignEstimate(c);
-  const ub = root.querySelector('[data-used-bar]'); if (ub && est.max) ub.style.width = `${Math.min(100, Math.round(((k.credits || 0) / est.max) * 100))}%`;
+  const whole = wholeOf(est, paceOf(c, k));
+  const ub = root.querySelector('[data-used-bar]'); if (ub && whole) ub.style.width = `${Math.min(100, Math.round(((k.credits || 0) / whole) * 100))}%`;
+  const wh = root.querySelector('[data-whole]'); if (wh && est.max == null) wh.textContent = `/ ${ctx.t('credits.aboutTotal', { n: fmt.credits2(whole) })}`;
   const pc = root.querySelector('[data-pace]'); if (pc) { const v = paceOf(c, k); if (v != null) pc.textContent = `≈ ${fmt.credits2(v)}`; }
   const billed = root.querySelector('[data-billed]'); if (billed) billed.textContent = fmt.int(c.billedMin || k.answered);
   // newest attempts slide into the table (first page, no filter)
@@ -1642,8 +1669,8 @@ function mountWizard(root, ctx) {
     wcPaste: (v) => { w.paste = v; },
     wcText: (v) => { w.text = v; dirty(); },
     wcGender: (v) => { w.gender = v; dirty(); ctx.rerender(); },
-    wcRate: (v, el) => { w.rate = Number(v) || 1; const o = root.querySelector('[data-rate-out]'); if (o) o.textContent = `${ctx.fmt.num(w.rate, 2)}×`; el.setAttribute('aria-valuetext', ctx.fmt.num(w.rate, 2)); },
-    wcTransferMin: (v) => { w.transferMin = Number(v) || TRANSFER_DEFAULT; dirty(); ctx.rerender(); },
+    wcRate: (v, el) => { w.rate = Number(v) || 1; const o = root.querySelector('[data-rate-out]'); if (o) o.textContent = `${ctx.fmt.num(w.rate, 2)}×`; el.setAttribute('aria-valuetext', `${ctx.fmt.num(w.rate, 2)}×`); },
+    wcTransferMin: (v) => { w.transferMin = Number(v) || 0; dirty(); ctx.rerender(); },
     wcKey: (v, el) => { const k = w.keys[Number(el.dataset.index)]; if (k) { k.action = v; dirty(); ctx.rerender(); } },
     wcDate: (v) => { w.date = v || w.date; dirty(); ctx.rerender(); },
     wcTime: (v) => { w.time = v || w.time; dirty(); ctx.rerender(); },
