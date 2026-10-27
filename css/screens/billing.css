@@ -115,7 +115,7 @@
 .bl-up-tbl td:first-child { min-width: 200px; }
 .bl-up-foot { align-items: center; gap: var(--s-3); flex-wrap: wrap; }
 .bl-up-foot > .grow { flex: 1 1 260px; }
-.bl-m-only { display: none; }
+.bl-m-only, .bl-m-only.bl-block { display: none; }
 
 /* spending limits: one card, two columns */
 .bl-limits-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-3) var(--s-6); align-items: start; }
@@ -176,7 +176,7 @@
   .bl-day .wdn { display: inline; }
   .bl-calc-input { grid-template-columns: minmax(0, 1fr); }
   .bl-d-only { display: none; }
-  .bl-m-only { display: block; }
+  .bl-m-only, .bl-m-only.bl-block { display: block; }
   .bl-up-tbl td:first-child { min-width: 0; }
   .bl-burn-svg { font-size: 21px; }
   .bl-burn-svg .lbl { font-size: 19px; }

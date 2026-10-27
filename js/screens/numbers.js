@@ -697,7 +697,7 @@ function buyStep4(ctx) {
       <div class="kv"><span class="k">${t('rev.monthly', { n: b.qty, price: fmt.int(m.price) })}</span><span class="v">${fmt.int(m.monthly)}</span></div>
       ${m.live ? h`<div class="kv"><span class="k">${t('rev.firstMonth', { from: fmt.dayMonth(m.first.from), to: fmt.dayMonth(m.first.to) })}</span><span class="v">${fmt.credits2(m.firstTotal)}</span></div>
         <p class="hint-xs mono nm-prorate" data-nm-prorate>${b.qty > 1 ? t('rev.prorateN', { count: m.first.days, days: m.first.days, price: fmt.int(m.price), cycle: m.first.cycleDays, each: fmt.credits2(m.first.each), n: b.qty, total: fmt.credits2(m.firstTotal) }) : t('rev.prorate', { count: m.first.days, days: m.first.days, price: fmt.int(m.price), cycle: m.first.cycleDays, each: fmt.credits2(m.first.each) })}</p>
-        <div class="kv"><span class="k">${m.postpaid ? t('rev.addedInvoice', { month: monthName(ctx, m.invoiceOn) }) : t('rev.today')}</span><span class="v" data-nm-today>${fmt.credits2(m.today)}</span></div>
+        <div class="kv"><span class="k">${m.postpaid ? t('rev.addedInvoice', { month: periodName(ctx, m.invoiceOn) }) : t('rev.today')}</span><span class="v" data-nm-today>${fmt.credits2(m.today)}</span></div>
         <p class="hint-xs">${m.postpaid ? t('rev.thenPostpaid', { price: fmt.int(m.monthly), issued: fmt.dateProse(m.invoiceOn), date: fmt.dayMonth(m.first.next) }) : t('rev.thenOn', { price: fmt.int(m.monthly), date: fmt.dayMonth(m.first.next) })}</p>
         ${m.postpaid ? h`<div class="kv kv-total"><span class="k">${t('rev.limitAfter')}</span><span class="v" data-nm-after>${fmt.credits2(m.after)}</span></div>
           <p class="hint-xs">${t('rev.limitNow', { left: fmt.credits2(m.left), limit: fmt.int(describeProfile().creditLimit || 0) })}</p>`
@@ -706,7 +706,7 @@ function buyStep4(ctx) {
         <p class="hint-xs">${t('rev.sandbox', { price: fmt.int(m.monthly) })}</p>`}
       ${m.short ? h`<div class="note note-warn">${icon('alert')}<div class="grow">${m.postpaid ? t('rev.shortLimit') : t('rev.short')} ${m.postpaid ? h`<a class="linkbtn" href="#/billing?section=mode" data-action="by.4.limit">${t('rev.limitLink')}</a>` : h`<button type="button" class="linkbtn" data-action="by.4.topup">${t('top.topup')}</button>`}</div></div>` : ''}
       <button type="button" class="btn btn-primary btn-lg btn-block nm-order" data-action="by.4.order" ${raw(b.ordering ? 'aria-busy="true"' : b.expired || m.short ? 'aria-disabled="true" aria-describedby="nm-order-h"' : '')}>${b.ordering ? raw('<span class="spin" aria-hidden="true"></span>') : icon('check')}${t('rev.order', { price: fmt.int(m.monthly) })}</button>
-      <span class="hint-xs" id="nm-order-h">${b.expired ? t('rev.expired') : m.short ? (m.postpaid ? t('rev.shortLimit') : t('rev.short')) : !m.live ? t('rev.orderHintSandbox') : m.postpaid ? t('rev.orderHintPostpaid', { month: monthName(ctx, m.invoiceOn) }) : t('rev.orderHint')}</span>
+      <span class="hint-xs" id="nm-order-h">${b.expired ? t('rev.expired') : m.short ? (m.postpaid ? t('rev.shortLimit') : t('rev.short')) : !m.live ? t('rev.orderHintSandbox') : m.postpaid ? t('rev.orderHintPostpaid', { month: periodName(ctx, m.invoiceOn) }) : t('rev.orderHint')}</span>
     </aside></div>`;
 }
 
@@ -714,6 +714,13 @@ function buyStep4(ctx) {
 function monthName(ctx, ymd) {
   const loc = ctx.lang === 'th' ? 'th-TH' : ctx.lang === 'zh' ? 'zh-CN' : 'en-GB';
   return new Intl.DateTimeFormat(loc, { month: 'long', timeZone: 'Asia/Bangkok' }).format(new Date(`${String(ymd).slice(0, 10)}T12:00:00+07:00`));
+}
+
+/** Billing-period month of an invoice issued on `ymd` (issued 1 Nov → October), matching Billing's invoice labels. */
+function periodName(ctx, ymd) {
+  const d = new Date(`${String(ymd).slice(0, 10)}T12:00:00+07:00`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return monthName(ctx, d.toISOString().slice(0, 10));
 }
 
 function buyStep5(ctx) {
