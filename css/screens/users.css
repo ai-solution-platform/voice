@@ -53,6 +53,29 @@
   .us-tabs { max-width: 100%; }
   .us-tabs button { padding: 6px 10px; }
   .us-filters .field { min-width: 0; flex: 1 1 100%; }
+
+  /* phone: each member (and each audit event) becomes a card — every action in reach, no sideways scroll */
+  .us-mtbl, .us-audit { min-width: 0; }
+  .us-mtbl thead, .us-audit thead { display: none; }
+  .us-mtbl, .us-mtbl tbody, .us-audit, .us-audit tbody { display: block; width: 100%; }
+  .us-mtbl tr, .us-audit tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 14px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .us-mtbl tr:last-child, .us-audit tr:last-child { border-bottom: 0; }
+  .us-mtbl td, .us-audit td { display: block; min-width: 0; padding: 0; border: 0; text-align: left; white-space: normal; }
+  .us-mtbl td[data-label]::before, .us-audit td[data-label]::before { content: attr(data-label); display: block; font-size: var(--fs-xs); color: var(--slate); margin-bottom: 3px; }
+  .us-mtbl .us-c-name, .us-mtbl .us-c-email, .us-mtbl .us-c-act { grid-column: 1 / -1; }
+  .us-mtbl .us-c-email { margin-top: -6px; overflow-wrap: anywhere; white-space: normal; }
+  .us-mtbl .us-c-dup { display: none; }
+  .us-mtbl .us-c-name .mono { white-space: normal; overflow-wrap: anywhere; }
+  .us-mtbl .us-c-act { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+  .us-mtbl .us-c-act .btn { flex: 1 1 auto; justify-content: center; }
+  .us-audit .us-a-time { grid-column: 1; }
+  .us-audit .us-a-who { grid-column: 2; text-align: right; white-space: normal; }
+  .us-audit .us-a-what { grid-column: 1 / -1; }
+  .us-audit td.us-a-time { white-space: nowrap; }
+  .us-audit td:nth-child(3) { min-width: 0; }
+  .us-audit td.mono { white-space: normal; overflow-wrap: anywhere; }
+  /* the last column is not a pinned column in this layout */
+  .tbl-wrap.x-pin .us-mtbl td:last-child, .tbl-wrap.x-pin .us-audit td:last-child { position: static; }
 }
 @media (prefers-reduced-motion: reduce) { .us-sub.us-fresh { animation: none; } }
 html[data-motion="reduce"] .us-sub.us-fresh { animation: none; }

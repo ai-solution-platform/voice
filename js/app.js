@@ -19,6 +19,7 @@ import { closeAll } from './ui/overlay.js';
 import { closeDialer } from './ui/dialer.js';
 import { initI18nCheck } from './ui/i18ncheck.js';
 import { SCREEN_IDS } from './screens/index.js';
+import { reqId, reqIdLine } from './ui/reqid.js';
 
 const LANG_CODES = ['en', 'th', 'zh'];
 const GROUP = { overview: 'start', connect: 'start', 'test-call': 'start', numbers: 'build', trunks: 'build', otp: 'build', campaigns: 'build', flows: 'build', logs: 'operate', reports: 'operate', alerts: 'operate' };
@@ -29,7 +30,7 @@ function brokenScreen(id) {
     id,
     nav: { group: GROUP[id] || 'account', icon: 'alert-circle', labelKey: `nav.${id}` },
     titleKey: `nav.${id}`,
-    render: () => `<div class="page"><div class="card errstate" role="alert"><h2>${t('common.errorTitle', { screen: t(`nav.${id}`) })}</h2><p class="hint">${t('common.errorBody')}</p></div></div>`,
+    render: () => `<div class="page"><div class="card errstate" role="alert"><h2>${t('common.errorTitle', { screen: t(`nav.${id}`) })}</h2><p class="hint">${t('common.errorBody')}</p>${reqIdLine(reqId(`${id}|HTTP 500`), { hint: true, cls: 'rq-err' })}</div></div>`,
   };
 }
 

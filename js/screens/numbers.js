@@ -4,9 +4,9 @@
 // for their name and size only — nothing leaves the browser.
 
 import { raw, on, reducedMotion } from '../core/dom.js';
-import { newId, audit, notify, spend, setStep, balance } from '../core/actions.js';
+import { newId, audit, notify, spend, setStep, balance, isPostpaid, numberFeesMonth, currentPeriod, describeProfile } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
-import { PRICES } from '../data/prices.js';
+import { PRICES, numberFirstMonth, numberFeeInMonth } from '../data/prices.js';
 
 export const id = 'numbers';
 export const nav = { group: 'build', icon: 'hash', labelKey: 'nav.numbers' };
@@ -25,7 +25,9 @@ const ROUTES = ['flow', 'trunk', 'webhook', 'message'];
 const MESSAGES = ['otp-only', 'closed'];
 const OK_TYPES = /\.(pdf|jpe?g|png)$/i;
 const MAX_BYTES = 10 * 1024 * 1024;
-const RELEASE_ON = '2026-11-30'; // end of the paid month
+/** The first month of a number ordered now: days left in this month × fee ÷ days in the month, then the 1st (prices.js). */
+const firstMonth = (monthly) => numberFirstMonth(monthly, nowMs());
+const RELEASE_ON = firstMonth(0).to; // end of the paid month (fees run per calendar month)
 const noop = () => {};
 const URL_RE = /^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/[\w./-]*)?$/i;
 
@@ -154,13 +156,13 @@ function tiles(ctx) {
   const all = ctx.list('numbers');
   const active = all.filter((n) => n.status === 'active');
   const review = all.filter((n) => n.status === 'in-review');
-  const fees = active.reduce((s, n) => s + (n.monthly || 0), 0) + all.filter((n) => n.status === 'releasing').reduce((s, n) => s + (n.monthly || 0), 0);
+  const fees = numberFeesMonth(); // same figure as Billing › Usage, the statement and the invoice
   const tile = (key, value, line, action, val, pressed) => h`<button type="button" class="card tile nm-tile" data-action="${action}" data-value="${val}" aria-pressed="${pressed}"><span class="t">${t(`tile.${key}`)}</span><span class="v">${value}</span><span class="h">${line}</span></button>`;
   return h`<div class="grid g-4 nm-tiles">
     ${tile('total', fmt.int(all.length), t('tile.totalLine', { local: fmt.int(all.filter((n) => n.type === 'local').length), regional: fmt.int(all.filter((n) => n.type === 'regional').length), loa: fmt.int(all.filter((n) => n.type === 'loa').length) }), 'nb.tile.total', 'all', ctx.state.status === 'all' && ctx.state.type === 'all')}
     ${tile('active', fmt.int(active.length), t('tile.activeLine'), 'nb.tile.active', 'active', ctx.state.status === 'active')}
     ${tile('review', fmt.int(review.length), t('tile.reviewLine'), 'nb.tile.review', 'in-review', ctx.state.status === 'in-review')}
-    <a class="card tile tile-link nm-tile" href="#/billing?section=usage" data-action="nb.tile.fees"><span class="t">${t('tile.fees')}</span><span class="v">${fmt.int(fees)}</span><span class="h">${t('tile.feesLine', { n: fmt.int(active.length), price: fmt.int(PRICES.number) })}</span></a>
+    <a class="card tile tile-link nm-tile" href="#/billing?section=usage" data-action="nb.tile.fees"><span class="t">${t('tile.fees')}</span><span class="v">${fmt.credits2(fees.credits)}</span><span class="h">${fees.first ? t('tile.feesSplit', { full: fmt.int(fees.full), price: fmt.int(fees.price), first: fmt.int(fees.first) }) : t('tile.feesLine', { n: fmt.int(fees.full), price: fmt.int(fees.price) })}</span></a>
   </div>`;
 }
 
@@ -230,6 +232,19 @@ function targetLabel(ctx, d) {
   return t(`route.msg.${d.msg}`);
 }
 
+/** Drawer › Cost: the monthly fee, what this month cost (full month or the prorated first month) and the next charge. */
+function feeLines(ctx, n) {
+  const { t, html: h, fmt } = ctx;
+  const f = numberFeeInMonth(n, currentPeriod());
+  const next = firstMonth(n.monthly).next;
+  const how = f.kind === 'full' ? t('d.monthFull', { date: fmt.dayMonth(`${currentPeriod()}-01`) })
+    : f.kind === 'first' ? t('d.monthFirst', { count: f.days, days: f.days, price: fmt.int(n.monthly), cycle: f.cycleDays, date: fmt.dayMonth(f.from) }) : '';
+  const month = f.kind === 'none' ? t('d.monthNone') : h`<strong class="tnum">${fmt.credits2(f.credits)}</strong><span class="hint-xs nm-block">${how}</span>`;
+  return h`<div class="kv"><span class="k">${t('d.fee')}</span><span class="v">${t('d.feeValue', { price: fmt.int(n.monthly) })}</span></div>
+    <div class="kv"><span class="k">${t('d.thisMonth')}</span><span class="v nm-fee-v">${month}</span></div>
+    <div class="kv"><span class="k">${t('d.next')}</span><span class="v">${n.status === 'releasing' ? t('d.nextNone') : f.kind === 'none' ? t('d.nextLive') : t('d.nextOn', { price: fmt.int(n.monthly), date: fmt.dateProse(next) })}</span></div>`;
+}
+
 function drawerBody(ctx, n) {
   const { t, html: h, icon, fmt } = ctx;
   const d = ctx.state.d;
@@ -277,8 +292,7 @@ function drawerBody(ctx, n) {
       <a class="linkbtn hint-xs" href="#/numbers/buy?step=docs&view=1" data-action="nb.d.docs">${icon('file-text', 'ico-xs')}${docsLine}</a></section>
 
     <section class="nm-sec" aria-labelledby="nm-f-h"><h3 id="nm-f-h">${t('d.feeTitle')}</h3>
-      ${n.monthly != null ? h`<div class="kv"><span class="k">${t('d.fee')}</span><span class="v">${t('d.feeValue', { price: fmt.int(n.monthly) })}</span></div>
-        <div class="kv"><span class="k">${t('d.next')}</span><span class="v">${n.status === 'releasing' ? t('d.nextNone') : n.status === 'active' ? fmt.dateProse('2026-11-01') : t('d.nextActive')}</span></div>` : h`<p class="hint-xs">${t('d.feeLoa')}</p>`}
+      ${n.monthly != null ? feeLines(ctx, n) : h`<p class="hint-xs">${t('d.feeLoa')}</p>`}
       <span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('common.plannedPrices')}</span></section>
 
     <section class="nm-sec nm-danger" aria-labelledby="nm-x-h"><h3 id="nm-x-h">${t('d.dangerTitle')}</h3>
@@ -319,7 +333,7 @@ function syncDrawer(ctx) {
   const n = ctx.list('numbers').find((x) => x.id === nid);
   if (!n) {
     closeDrawer();
-    ctx.ui.toast(ctx.t('d.notFound'), { kind: 'warn' });
+    ctx.ui.toast(ctx.t('d.notFound'), { kind: 'warn', reqId: true });
     ctx.go('numbers', { replace: true });
     return;
   }
@@ -643,13 +657,23 @@ function syncMissing(root, ctx) {
   if (next) { if (missing.length) next.setAttribute('aria-disabled', 'true'); else next.removeAttribute('aria-disabled'); }
 }
 
+/**
+ * What an order costs. The first month is prorated: on the order day each number is charged for the days left in
+ * this month (fee × days ÷ days in the month); from the 1st the full fee. Prepaid: from the balance today. Postpaid:
+ * added to the invoice issued on the 1st, within the credit limit.
+ */
 function orderMath(ctx) {
   const b = ctx.state.buy;
   const price = unitPrice(ctx, b.qty);
   const monthly = price * b.qty;
   const live = ctx.store.get('env') === 'live';
-  const today = live ? monthly : 0;
-  return { price, monthly, today, live, after: Math.round((balance() - today) * 100) / 100, short: live && balance() < today };
+  const first = firstMonth(price);
+  const firstTotal = Math.round(first.each * b.qty * 100) / 100;
+  const today = live ? firstTotal : 0;
+  const postpaid = isPostpaid();
+  const open = postpaid ? describeProfile().openInvoice : null;
+  return { price, monthly, first, firstTotal, today, live, postpaid, invoiceOn: (open && open.issuedAt) || first.next,
+    left: balance(), after: Math.round((balance() - today) * 100) / 100, short: live && balance() < today };
 }
 
 function buyStep4(ctx) {
@@ -671,13 +695,25 @@ function buyStep4(ctx) {
     <aside class="card card-pad stack nm-pay" aria-labelledby="nm-pay-h">
       <div class="row nm-cost-h"><strong id="nm-pay-h">${t('rev.costTitle')}</strong><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('common.plannedPrices')}</span></div>
       <div class="kv"><span class="k">${t('rev.monthly', { n: b.qty, price: fmt.int(m.price) })}</span><span class="v">${fmt.int(m.monthly)}</span></div>
-      <div class="kv"><span class="k">${t('rev.today')}</span><span class="v">${fmt.int(m.today)}</span></div>
-      <p class="hint-xs">${m.live ? t('rev.then') : t('rev.sandbox', { price: fmt.int(m.monthly) })}</p>
-      ${m.live ? h`<div class="kv kv-total"><span class="k">${t('rev.after')}</span><span class="v">${fmt.credits2(m.after)}</span></div>` : ''}
-      ${m.short ? h`<div class="note note-warn">${icon('alert')}<div class="grow">${t('rev.short')} <button type="button" class="linkbtn" data-action="by.4.topup">${t('top.topup')}</button></div></div>` : ''}
+      ${m.live ? h`<div class="kv"><span class="k">${t('rev.firstMonth', { from: fmt.dayMonth(m.first.from), to: fmt.dayMonth(m.first.to) })}</span><span class="v">${fmt.credits2(m.firstTotal)}</span></div>
+        <p class="hint-xs mono nm-prorate" data-nm-prorate>${b.qty > 1 ? t('rev.prorateN', { count: m.first.days, days: m.first.days, price: fmt.int(m.price), cycle: m.first.cycleDays, each: fmt.credits2(m.first.each), n: b.qty, total: fmt.credits2(m.firstTotal) }) : t('rev.prorate', { count: m.first.days, days: m.first.days, price: fmt.int(m.price), cycle: m.first.cycleDays, each: fmt.credits2(m.first.each) })}</p>
+        <div class="kv"><span class="k">${m.postpaid ? t('rev.addedInvoice', { month: monthName(ctx, m.invoiceOn) }) : t('rev.today')}</span><span class="v" data-nm-today>${fmt.credits2(m.today)}</span></div>
+        <p class="hint-xs">${m.postpaid ? t('rev.thenPostpaid', { price: fmt.int(m.monthly), issued: fmt.dateProse(m.invoiceOn), date: fmt.dayMonth(m.first.next) }) : t('rev.thenOn', { price: fmt.int(m.monthly), date: fmt.dayMonth(m.first.next) })}</p>
+        ${m.postpaid ? h`<div class="kv kv-total"><span class="k">${t('rev.limitAfter')}</span><span class="v" data-nm-after>${fmt.credits2(m.after)}</span></div>
+          <p class="hint-xs">${t('rev.limitNow', { left: fmt.credits2(m.left), limit: fmt.int(describeProfile().creditLimit || 0) })}</p>`
+          : h`<div class="kv kv-total"><span class="k">${t('rev.after')}</span><span class="v" data-nm-after>${fmt.credits2(m.after)}</span></div>`}`
+        : h`<div class="kv"><span class="k">${t('rev.today')}</span><span class="v">${fmt.int(0)}</span></div>
+        <p class="hint-xs">${t('rev.sandbox', { price: fmt.int(m.monthly) })}</p>`}
+      ${m.short ? h`<div class="note note-warn">${icon('alert')}<div class="grow">${m.postpaid ? t('rev.shortLimit') : t('rev.short')} ${m.postpaid ? h`<a class="linkbtn" href="#/billing?section=mode" data-action="by.4.limit">${t('rev.limitLink')}</a>` : h`<button type="button" class="linkbtn" data-action="by.4.topup">${t('top.topup')}</button>`}</div></div>` : ''}
       <button type="button" class="btn btn-primary btn-lg btn-block nm-order" data-action="by.4.order" ${raw(b.ordering ? 'aria-busy="true"' : b.expired || m.short ? 'aria-disabled="true" aria-describedby="nm-order-h"' : '')}>${b.ordering ? raw('<span class="spin" aria-hidden="true"></span>') : icon('check')}${t('rev.order', { price: fmt.int(m.monthly) })}</button>
-      <span class="hint-xs" id="nm-order-h">${b.expired ? t('rev.expired') : m.short ? t('rev.short') : t('rev.orderHint')}</span>
+      <span class="hint-xs" id="nm-order-h">${b.expired ? t('rev.expired') : m.short ? (m.postpaid ? t('rev.shortLimit') : t('rev.short')) : !m.live ? t('rev.orderHintSandbox') : m.postpaid ? t('rev.orderHintPostpaid', { month: monthName(ctx, m.invoiceOn) }) : t('rev.orderHint')}</span>
     </aside></div>`;
+}
+
+/** "November" — the month an invoice is issued in (the postpaid invoice of the 1st). */
+function monthName(ctx, ymd) {
+  const loc = ctx.lang === 'th' ? 'th-TH' : ctx.lang === 'zh' ? 'zh-CN' : 'en-GB';
+  return new Intl.DateTimeFormat(loc, { month: 'long', timeZone: 'Asia/Bangkok' }).format(new Date(`${String(ymd).slice(0, 10)}T12:00:00+07:00`));
 }
 
 function buyStep5(ctx) {
@@ -690,7 +726,7 @@ function buyStep5(ctx) {
     <h2>${t('done.title', { count: nums.length, n: nums.length })}</h2>
     <div class="row nm-done-nums">${nums.map((n) => h`<span class="chip chip-navy mono" translate="no">${n.number}</span>`)}<span class="chip chip-warn">${t('st.review')}</span></div>
     <p class="hint">${t('done.body')}</p>
-    <ol class="nm-next"><li>${t('done.n1')}</li><li>${t('done.n2')}</li><li>${t('done.n3', { date: fmt.dateProse('2026-11-01') })}</li></ol>
+    <ol class="nm-next"><li>${t('done.n1')}</li><li>${t('done.n2')}</li><li>${t('done.n3', { date: fmt.dateProse(firstMonth(PRICES.number).next) })}</li></ol>
     <div class="row nm-done-a">
       <a class="btn btn-primary" href="#/numbers?n=${nums[0] ? nums[0].id : ''}" data-action="by.5.route">${icon('route')}${t('done.route')}</a>
       ${ret ? h`<a class="btn btn-navy" href="#/connect/sip" data-action="by.5.connect">${icon('server')}${t('done.connect')}</a>` : ''}
@@ -794,7 +830,7 @@ function placeOrder(ctx) {
     const m = orderMath(ctx);
     const subId = bb.sub || (ctx.list('subAccounts')[0] || {}).id || null;
     const at = new Date(nowMs()).toISOString();
-    const recs = bb.reserved.map((num) => ({ id: newId('num'), number: num, e164: e164(num), type: bb.group === '02' ? 'local' : 'regional', area: bb.area, sub: subId, routing: null, callerIdFor: null, status: 'in-review', orderedAt: at, monthly: m.price }));
+    const recs = bb.reserved.map((num) => ({ id: newId('num'), number: num, e164: e164(num), type: bb.group === '02' ? 'local' : 'regional', area: bb.area, sub: subId, routing: null, callerIdFor: null, status: 'in-review', orderedAt: at, feeFrom: m.live ? at : null, monthly: m.price }));
     ctx.store.set('numbers', [...ctx.list('numbers'), ...recs]);
     if (m.today) spend(m.today);
     recs.forEach((r) => { audit('number.ordered', { number: r.number, monthly: r.monthly }, r.id); notify('numberOrdered', { vars: { number: r.number }, href: `numbers?n=${r.id}` }); });
@@ -918,6 +954,7 @@ export function mount(root, ctx) {
     'by.4.edit': (el) => { ctx.state.buy.step = Number(el.dataset.value); ctx.rerender(); },
     'by.4.order': () => placeOrder(ctx),
     'by.4.topup': () => ctx.ui.topup(),
+    'by.4.limit': noop, // link to Billing › How you pay
     'by.5.route': () => { ctx.state.buy = { ...freshBuy(), run: ctx.state.buy.run + 1, ordered: [] }; },
     'by.5.back': () => { ctx.state.buy = { ...freshBuy(), run: ctx.state.buy.run + 1 }; },
     'by.5.connect': () => { ctx.state.buy = { ...freshBuy(), run: ctx.state.buy.run + 1 }; },

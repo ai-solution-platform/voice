@@ -5,7 +5,7 @@
 // Every price comes from js/data/prices.js; every total from the store (js/data/active.js) so Overview = Billing = Reports.
 
 import { html as h, raw, on, reducedMotion } from '../core/dom.js';
-import { isActive, balance, addSalesRequest, describeProfile, isPostpaid, postpaidInvoices, creditRate, prepaidPlanAdjust } from '../core/actions.js';
+import { isActive, balance, addSalesRequest, describeProfile, isPostpaid, postpaidInvoices, creditRate, prepaidPlanAdjust, numberFeesMonth, sessionNumberFees, planAlerts, setPlanAlert, PLAN_ALERT_LEVELS } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES, comparePlans, paygCost, firstTopUpOfferActive } from '../data/prices.js';
 
@@ -28,7 +28,7 @@ const SEP_VOICE_USED = 47180;
 // Other channels (SMS · LINE · Email) per day, sample: the 7 days 21–27 Oct add up to 3,290 (Billing 7-day average).
 const OTHER_PER_DAY = { '2026-10-14': 520, '2026-10-15': 480, '2026-10-16': 470, '2026-10-17': 310, '2026-10-18': 260, '2026-10-19': 610, '2026-10-20': 500, '2026-10-21': 590, '2026-10-22': 560, '2026-10-23': 330, '2026-10-24': 390, '2026-10-25': 300, '2026-10-26': 830, '2026-10-27': 290 };
 const VOICE_ITEMS = ['outbound', 'otp', 'inbound', 'recording', 'numbers', 'extraConcurrent'];
-const SECTIONS = ['prices', 'usage', 'limits', 'offers', 'statements', 'invoices', 'mode', 'plan'];
+const SECTIONS = ['prices', 'usage', 'limits', 'offers', 'statements', 'invoices', 'mode', 'plan', 'upcoming'];
 const r2 = (n) => Math.round(n * 100) / 100;
 
 // ---------- data helpers ----------
@@ -68,6 +68,18 @@ function demoSpend(ctx) {
   if (!cur) return 0;
   const adj = prepaidPlanAdjust();
   return Math.max(0, r2(cur.closing + demoTopUps(ctx) + (adj ? adj.planCredits + adj.reprice : 0) - balance()));
+}
+/** Session spend other than number fees (those are in the "Numbers" line, live from the numbers list). */
+const demoCalls = (ctx) => Math.max(0, r2(demoSpend(ctx) - sessionNumberFees()));
+/**
+ * Usage rows this month: the sample usage with the number fees taken live from the numbers list (the same figure
+ * as Numbers › "Number fees this month", the statement and the invoice), plus calls made in this demo session.
+ */
+function usageRows(ctx) {
+  const fees = numberFeesMonth();
+  const rows = ctx.list('billing.usage').map((u) => (u.item === 'numbers' ? { ...u, quantity: fees.count, credits: fees.credits, fees } : u));
+  if (fees.credits && !rows.some((u) => u.item === 'numbers')) rows.unshift({ product: 'voice', item: 'numbers', quantity: fees.count, unit: 'number', credits: fees.credits, fees });
+  return rows;
 }
 function usedToday(ctx) {
   if (!ctx.store.get('billing.usedToday')) { const used = (statements(ctx)[0] || {}).used || 0; return { total: used, voice: used, other: 0 }; }
@@ -251,8 +263,8 @@ function chartSummary(ctx, rows) {
 
 function usageCard(ctx) {
   const { t, fmt, icon } = ctx;
-  const usage = ctx.list('billing.usage');
-  const d = demoSpend(ctx);
+  const usage = usageRows(ctx);
+  const d = demoCalls(ctx);
   if (!usage.length && !d) {
     return h`<section class="card bl-usage" id="bl-usage" aria-labelledby="bl-usage-h"><div class="card-head"><h2 id="bl-usage-h">${t('usage.title')}</h2></div>
       <div class="empty"><span class="art">${icon('list')}</span><strong>${t('usage.empty')}</strong><span class="hint">${t('usage.emptyHint')}</span>
@@ -263,7 +275,7 @@ function usageCard(ctx) {
   const voiceSum = r2(voice.reduce((s, u) => s + u.credits, 0) + d);
   const total = r2(voiceSum + others.reduce((s, u) => s + u.credits, 0));
   const row = (u) => h`<tr class="bl-click" data-action="bl.usage.row" data-value="${u.product}" tabindex="0">
-      <td><span class="strong">${t(`usage.item.${u.item}`)}</span>${u.product === 'voice' ? h` <span class="hint-xs">· ${t('usage.voice')}</span>` : ''}</td>
+      <td><span class="strong">${t(`usage.item.${u.item}`)}</span>${u.product === 'voice' ? h` <span class="hint-xs">· ${t('usage.voice')}</span>` : ''}${u.fees && u.fees.first ? h`<span class="hint-xs bl-block">${t('up.numbersSub', { full: fmt.int(u.fees.full), first: fmt.int(u.fees.first) })}</span>` : ''}</td>
       <td class="num mono">${u.product === 'voice' ? h`${fmt.int(u.quantity)} ${t(`usage.unit.${u.unit}`, { count: u.quantity })}` : h`<span class="hint-xs" title="${t('usage.otherQty')}">—</span>`}</td><td class="num mono">${fmt.credits2(u.credits)}</td></tr>`;
   return h`<section class="card bl-usage" id="bl-usage" aria-labelledby="bl-usage-h"><div class="card-head"><h2 id="bl-usage-h">${t('usage.title')}</h2><span class="hint">${t('usage.range', { to: fmt.dayMonth(nowMs()) })}</span></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('usage.product')}</th><th class="num">${t('usage.qty')}</th><th class="num">${t('usage.credits')}</th></tr></thead>
@@ -403,6 +415,111 @@ function modeCard(ctx) {
       <p class="hint-xs">${t('mode.changeNote')}</p></div></section>`;
 }
 
+// ---------- commitment plan: burn-down, month-end projection, usage alerts ----------
+const DAY = 86400000;
+const bkkMidnight = (ymd) => Date.parse(`${ymd}T00:00:00+07:00`);
+/**
+ * The plan's minutes over the cycle, from the store: cumulative outbound minutes per day (series; today also counts
+ * the calls made in this demo), the ideal straight line to the commitment, and the month-end projection at this
+ * cycle's pace (minutes so far ÷ days so far × days in the cycle).
+ */
+function planBurn(store, p, now = nowMs()) {
+  const start = bkkMidnight(p.start);
+  const end = bkkMidnight(p.next);
+  const cycleDays = Math.round((end - start) / DAY);
+  const elapsed = Math.min(cycleDays, Math.max(1 / 24, (now - start) / DAY));
+  const included = p.committed + (p.carried || 0);
+  const today = new Date(now + 7 * 3600000).toISOString().slice(0, 10);
+  const days = (store.get('series') || []).filter((d) => d.date >= p.start && d.date < p.next && d.date <= today);
+  const seriesSum = days.reduce((a, d) => a + d.outMin, 0);
+  const extra = Math.max(0, p.used - seriesSum);
+  let acc = 0;
+  const pts = [{ x: 0, y: 0, date: p.start }];
+  for (const d of days) {
+    acc += d.outMin;
+    const isToday = d.date === today;
+    pts.push({ x: isToday ? elapsed : (bkkMidnight(d.date) - start) / DAY + 1, y: isToday ? acc + extra : acc, date: d.date });
+  }
+  if (!days.some((d) => d.date === today)) pts.push({ x: elapsed, y: p.used, date: today });
+  const pace = p.used / elapsed;
+  const projected = Math.round((pace * cycleDays) / 10) * 10;
+  const ideal = Math.round((included * elapsed) / cycleDays);
+  const crossed = (min) => (pts.find((q) => q.y >= min) || {}).date || null;
+  const reach = (min) => {
+    if (p.used >= min) return { reached: crossed(min) || today };
+    const at = pace > 0 ? start + (min / pace) * DAY : Infinity;
+    return at < end ? { expected: new Date(at + 7 * 3600000).toISOString().slice(0, 10) } : {};
+  };
+  return { cycleDays, elapsed, included, pts, pace, projected, ideal, over: projected - included, reach, today };
+}
+
+function niceTop(v) {
+  const p = 10 ** Math.floor(Math.log10(Math.max(1, v)));
+  const n = v / p;
+  return ([1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((s) => n <= s) || 10) * p;
+}
+
+/** Burn-down chart (SVG): used minutes vs the ideal line, the projection to the cycle end and the commitment. */
+function burnChart(ctx, p, b) {
+  const { t, fmt, esc } = ctx;
+  const W = 640, H = 230, L = 56, R = 18, T = 14, B = 30;
+  const top = niceTop(Math.max(b.included, b.projected, b.pts[b.pts.length - 1].y) * 1.06);
+  const x = (d) => L + (d / b.cycleDays) * (W - L - R);
+  const y = (v) => T + (1 - v / top) * (H - T - B);
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => top * f);
+  const now = b.pts[b.pts.length - 1];
+  const used = b.pts.map((q) => `${x(q.x).toFixed(1)},${y(q.y).toFixed(1)}`).join(' ');
+  const area = `${x(0)},${y(0)} ${used} ${x(now.x).toFixed(1)},${y(0)}`;
+  const xt = [0, 7, 14, 21, 28].filter((d) => d < b.cycleDays - 4);
+  const dayLabel = (d) => fmt.dayMonth(new Date(bkkMidnight(p.start) + d * DAY + 12 * 3600000));
+  const at80 = Math.round(p.committed * 0.8);
+  const aria = t('burn.aria', { used: fmt.int(p.used), min: fmt.int(b.included), now: fmt.dayMonth(nowMs()), ideal: fmt.int(b.ideal), proj: fmt.int(b.projected), end: fmt.dayMonth(p.end) });
+  return raw(`<svg class="bl-burn-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(aria)}">
+    ${ticks.map((v) => `<line class="g" x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text class="ax" x="${L - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${esc(fmt.compact(v))}</text>`).join('')}
+    ${xt.map((d, i) => `<text class="ax${i % 2 ? ' ax-odd' : ''}" x="${x(d).toFixed(1)}" y="${H - 9}" text-anchor="${d === 0 ? 'start' : 'middle'}">${esc(dayLabel(d))}</text>`).join('')}
+    <text class="ax" x="${W - R}" y="${H - 9}" text-anchor="end">${esc(fmt.dayMonth(p.end))}</text>
+    <line class="lim80" x1="${L}" x2="${W - R}" y1="${y(at80).toFixed(1)}" y2="${y(at80).toFixed(1)}"/><text class="lbl" x="${L + 6}" y="${(y(at80) - 5).toFixed(1)}">80%</text>
+    <line class="lim" x1="${L}" x2="${W - R}" y1="${y(b.included).toFixed(1)}" y2="${y(b.included).toFixed(1)}"/><text class="lbl strong" x="${L + 6}" y="${(y(b.included) - 5).toFixed(1)}">${esc(t('burn.planLine', { min: fmt.int(b.included) }))}</text>
+    <line class="ideal" x1="${x(0)}" y1="${y(0)}" x2="${x(b.cycleDays).toFixed(1)}" y2="${y(b.included).toFixed(1)}"/>
+    <polygon class="area" points="${area}"/>
+    <polyline class="used" points="${used}"/>
+    <line class="proj" x1="${x(now.x).toFixed(1)}" y1="${y(now.y).toFixed(1)}" x2="${x(b.cycleDays).toFixed(1)}" y2="${y(b.projected).toFixed(1)}"/>
+    <circle class="end" cx="${x(b.cycleDays).toFixed(1)}" cy="${y(b.projected).toFixed(1)}" r="4"/>
+    <circle class="now" cx="${x(now.x).toFixed(1)}" cy="${y(now.y).toFixed(1)}" r="5"/></svg>`);
+}
+
+/** Commitment plan › burn-down, the month-end projection and the 80 % / 100 % alerts you can switch on. */
+function burnSection(ctx, p, policy) {
+  const { t, fmt } = ctx;
+  const b = planBurn(ctx.store, p);
+  const rate = p.rate;
+  const alerts = planAlerts();
+  const chans = ((ctx.store.get('limits') || {}).channels || []).map((c) => t(`limits.ch.${c}`)).join(' + ') || t('limits.ch.none');
+  const ahead = p.used - b.ideal;
+  const alertRow = (level) => {
+    const min = Math.round((p.committed * level) / 100);
+    const r = b.reach(min);
+    const status = r.reached ? t('burn.reached', { date: fmt.dayMonth(r.reached) }) : r.expected ? t('burn.expected', { date: fmt.dayMonth(r.expected) }) : t('burn.notExpected');
+    const id = `bl-al-${level}`;
+    return h`<div class="bl-alert-row"><button type="button" class="toggle" role="switch" aria-checked="${!!alerts[level]}" aria-labelledby="${id}" data-action="bl.plan.alert" data-value="${level}"></button>
+      <span class="grow"><span class="strong" id="${id}">${t('burn.alertLabel', { pct: level, min: fmt.int(min) })}</span><span class="hint-xs bl-block">${status}</span></span></div>`;
+  };
+  return h`<div class="bl-burn" data-inv="bl.burn">
+    <div class="bl-burn-chart"><div class="row bl-burn-h"><strong>${t('burn.title')}</strong>
+      <span class="bl-legend"><span><i class="ln ln-used"></i>${t('burn.legend.used')}</span><span><i class="ln ln-ideal"></i>${t('burn.legend.ideal')}</span><span><i class="ln ln-proj"></i>${t('burn.legend.proj')}</span><span><i class="ln ln-plan"></i>${t('burn.legend.plan')}</span></span></div>
+      ${burnChart(ctx, p, b)}</div>
+    <div class="bl-burn-side stack-3">
+      <div class="bl-proj" role="status"><span class="hint-xs">${t('burn.projTitle', { date: fmt.dayMonth(p.end) })}</span>
+        <strong class="tnum" data-burn="projected">${t('burn.projValue', { proj: fmt.int(b.projected), min: fmt.int(b.included) })}</strong>
+        <span class="${b.over > 0 ? 'bl-over' : 'bl-unused'}" data-burn="${b.over > 0 ? 'over' : 'unused'}">${b.over > 0
+          ? t('burn.over', { n: fmt.int(b.over), credits: fmt.int(b.over * rate), rate: fmt.rate(rate) })
+          : t('burn.unused', { n: fmt.int(-b.over), policy })}</span>
+        <span class="hint-xs">${t('burn.basis', { pace: fmt.int(b.pace), used: fmt.int(p.used), days: fmt.num(b.elapsed, 1) })}</span>
+        <span class="hint-xs">${t(ahead >= 0 ? 'burn.ahead' : 'burn.behind', { ideal: fmt.int(b.ideal), n: fmt.int(Math.abs(ahead)) })}</span></div>
+      <div class="bl-alerts"><div class="row bl-burn-h"><strong>${t('burn.alerts')}</strong><span class="hint-xs">${t('burn.alertsHint', { channels: chans })}</span></div>
+        ${PLAN_ALERT_LEVELS.map(alertRow)}</div></div></div>`;
+}
+
 /** The commitment plan, when the contract has one: monthly charge, use this cycle, overage, unused minutes, next charge. */
 function commitCard(ctx) {
   const { t, fmt, icon } = ctx;
@@ -423,9 +540,55 @@ function commitCard(ctx) {
       ${fig(t('commit.unused'), t('commit.perContract'), policy)}
       ${fig(t('commit.next'), fmt.dateProse(p.next), t('commit.nextLine', { amount: fmt.credits2(p.monthlyCharge) }))}
     </div>
-    ${p.added != null || p.carried ? h`<p class="hint-xs bl-commit-note">${p.added != null ? t('commit.added', { n: fmt.credits2(p.added) }) : ''}${p.added != null && p.carried ? ' · ' : ''}${p.carried ? t('commit.carried', { n: fmt.int(p.carried) }) : ''}</p>` : ''}</div>
+    ${p.added != null || p.carried ? h`<p class="hint-xs bl-commit-note">${p.added != null ? t('commit.added', { n: fmt.credits2(p.added) }) : ''}${p.added != null && p.carried ? ' · ' : ''}${p.carried ? t('commit.carried', { n: fmt.int(p.carried) }) : ''}</p>` : ''}
+    ${burnSection(ctx, p, policy)}</div>
     <div class="card-foot row bl-commit-foot"><span class="hint-xs grow">${t('commit.foot')}</span>
       ${modeRequest(ctx) ? h`<span class="chip chip-warn">${icon('clock')}${t('mode.requested', { ref: modeRequest(ctx).ref })}</span>` : h`<button type="button" class="btn btn-sm" data-action="bl.plan.change">${icon('send')}${t('commit.change')}</button>`}</div></section>`;
+}
+
+/** Quantity of an invoice line: "44,726 min", "5,078 answered calls", "6 numbers"; with the rate when asked (printable). */
+function lineQty(ctx, l, withRate = false) {
+  const { t, fmt } = ctx;
+  if (l.quantity == null) return '';
+  const unit = l.unit === 'min' ? t('usage.unit.min') : l.unit ? t(`usage.unit.${l.unit}`, { count: l.quantity }) : '';
+  const q = `${fmt.int(l.quantity)} ${unit}`.trim();
+  return withRate && l.rate != null && l.kind !== 'numbers' ? `${q} × ${fmt.rate(l.rate)}` : q;
+}
+/** Rate column of the upcoming invoice. */
+function lineRate(ctx, l) {
+  const { t, fmt } = ctx;
+  if (l.kind === 'planMinutes') return t('up.included');
+  if (l.kind === 'numbers') return t('up.numbersRate', { price: fmt.int(l.rate) });
+  if (l.kind === 'extraConcurrent') return t('up.monthly', { price: fmt.int(l.rate) });
+  return l.rate != null ? fmt.rate(l.rate) : '—';
+}
+
+/**
+ * Postpaid: the invoice that will be issued on the 1st, line by line (Stripe "Upcoming invoice"). The lines come from
+ * actions.postpaidInvoices() (live usage + number fees + plan) and add up to "Used this month"; VAT 7 % on top.
+ */
+function upcomingCard(ctx) {
+  const { t, fmt, icon } = ctx;
+  const x = monthlyInvoices().find((i) => i.status === 'open');
+  if (!x) return '';
+  const rate = creditRate().thb || 1;
+  // Phones: quantity and rate move under the item name (the two middle columns are hidden), so nothing scrolls sideways.
+  const line = (l) => h`<tr><td><span class="strong">${t(`minv.line.${l.kind}`)}</span>${l.kind === 'numbers' && l.first ? h`<span class="hint-xs bl-block">${t('up.numbersSub', { full: fmt.int(l.full), first: fmt.int(l.first) })}</span>` : ''}
+      <span class="hint-xs bl-block bl-m-only">${[lineQty(ctx, l), lineRate(ctx, l)].filter((v) => v && v !== '—').join(' · ')}</span></td>
+    <td class="num tnum nowrap bl-d-only">${lineQty(ctx, l) || '—'}</td><td class="num tnum bl-d-only">${lineRate(ctx, l)}</td><td class="num mono">${fmt.credits2(l.credits)}</td></tr>`;
+  const foot = (label, value, key, cls = '') => h`<tr class="${cls}"><td>${label}</td><td class="bl-d-only"></td><td class="bl-d-only"></td><td class="num mono" data-up="${key}">${value}</td></tr>`;
+  return h`<section class="card bl-up" id="bl-upcoming" aria-labelledby="bl-up-h"><div class="card-head"><h2 id="bl-up-h">${t('up.title', { date: fmt.dayMonth(x.issued) })}</h2>
+      <span class="chip chip-info" tabindex="0" data-tip="${t('up.draftTip')}">${t('up.draft')}</span>
+      <span class="hint">${t('up.sub', { month: monthLabel(ctx, x.period), due: fmt.dateProse(x.due) })}</span></div>
+    ${x.lines.length ? h`<div class="tbl-wrap" data-pin="none"><table class="tbl bl-up-tbl"><thead><tr><th>${t('up.item')}</th><th class="num bl-d-only">${t('up.qty')}</th><th class="num bl-d-only">${t('up.rate')}</th><th class="num">${t('up.amount')}</th></tr></thead>
+      <tbody>${x.lines.map(line)}
+        ${foot(t('up.subtotal'), fmt.credits2(x.amount), 'subtotal', 'bl-sub')}
+        ${foot(t('up.vat'), fmt.credits2(x.vat), 'vat')}
+        ${foot(t('up.total'), fmt.credits2(x.total), 'total', 'bl-total')}</tbody></table></div>`
+    : h`<div class="empty"><span class="art">${icon('file-text')}</span><strong>${t('up.empty')}</strong></div>`}
+    <div class="card-foot row bl-up-foot"><span class="hint-xs grow">${t('up.foot', { thb: fmt.rate(rate), end: fmt.dayMonth(x.issued) })}</span>
+      <button type="button" class="btn btn-sm" data-action="bl.up.preview">${icon('file-text')}${t('up.preview')}</button>
+      <button type="button" class="btn btn-sm" data-action="bl.stmt.csv" data-value="${x.period}">${icon('download')}${t('stmt.csv')}</button></div></section>`;
 }
 
 /** Postpaid: one invoice a month, each with a printable invoice and the calls of that month as CSV. */
@@ -458,7 +621,8 @@ function statementsCard(ctx) {
         <td>${s.status === 'current' ? h`<span class="chip chip-warn">${t('stmt.current')}</span>` : h`<span class="chip">${t('stmt.closed')}</span>`}</td>
         <td class="num mono">${fmt.credits2(s.opening)}</td><td class="num mono">${fmt.credits2(s.topUps)}</td><td class="num mono">${s.bonus ? `+${fmt.credits2(s.bonus)}` : '0.00'}</td>${withPlan ? h`<td class="num mono">${s.planCredits ? `+${fmt.credits2(s.planCredits)}` : '0.00'}</td>` : ''}
         <td class="num mono">${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}</td><td class="num mono strong">${fmt.credits2(s.closing)}</td></tr>`)}</tbody></table></div>
-      <div class="card-foot hint-xs">${voiceOnly ? t('stmt.footVoice') : withPlan ? t('stmt.footWithPlan') : t('stmt.foot')}${adj ? h`<br>${t('stmt.footPlan', { min: fmt.int(profile().plan.committed), id: adj.invoice.id, date: tableDate(ctx, adj.invoice.date), minutes: fmt.int(adj.minutes), rate: fmt.rate(profile().plan.rate) })}` : ''}</div>`
+      <div class="card-foot hint-xs">${voiceOnly ? t('stmt.footVoice') : withPlan ? t('stmt.footWithPlan') : t('stmt.foot')}${adj ? h`<br>${t('stmt.footPlan', { min: fmt.int(profile().plan.committed), id: adj.invoice.id, date: tableDate(ctx, adj.invoice.date), minutes: fmt.int(adj.minutes), rate: fmt.rate(profile().plan.rate) })}
+        <button type="button" class="linkbtn hint-xs" data-action="bl.stmt.planinv" data-value="${adj.invoice.id}">${t('stmt.openPlanInv', { id: adj.invoice.id })}</button>` : ''}</div>`
     : h`<div class="empty"><span class="art">${icon('file-text')}</span><strong>${t('stmt.empty')}</strong><span class="hint">${t('stmt.emptyHint')}</span></div>`}
   </section>`;
 }
@@ -482,12 +646,20 @@ function monthLabel(ctx, period) {
   return new Intl.DateTimeFormat(loc, { month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(d);
 }
 
+/** Invoice type: a top-up, or the commitment plan charge ("Plan · 50,000 min"). */
+function invType(ctx, i) {
+  if (!i.plan) return ctx.t('inv.typeTopup');
+  const pl = PRICES.plans.find((x) => x.id === i.plan);
+  return ctx.t('inv.typePlan', { min: ctx.fmt.int(i.minutes || (pl ? pl.minMinutes : 0)) });
+}
+
 function invoicesCard(ctx) {
   const { t, fmt, icon } = ctx;
   const list = invoices(ctx);
   return h`<section class="card bl-inv" id="bl-invoices" aria-labelledby="bl-inv-h"><div class="card-head"><h2 id="bl-inv-h">${t('inv.title')}</h2><span class="hint">${t('inv.sub')}</span></div>
-    ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('inv.no')}</th><th>${t('inv.date')}</th><th class="num">${t('inv.credits')}</th><th class="num">${t('inv.net')}</th><th class="num">${t('inv.vat')}</th><th class="num">${t('inv.total')}</th><th><span class="sr-only">${t('stmt.files')}</span></th></tr></thead>
-      <tbody>${list.map((i) => h`<tr class="${ctx.state.fresh === i.id ? 'new-row' : ''}"><td class="mono strong" translate="no">${i.id}${i.demo ? h` <span class="chip chip-navy">${t('common.demoTag')}</span>` : ''}${i.plan ? h` <span class="chip chip-info">${t('inv.plan')}</span>` : ''}</td><td class="nowrap">${tableDate(ctx, i.date)}</td>
+    ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('inv.no')}</th><th class="bl-d-only">${t('inv.type')}</th><th>${t('inv.date')}</th><th class="num">${t('inv.credits')}</th><th class="num">${t('inv.net')}</th><th class="num">${t('inv.vat')}</th><th class="num">${t('inv.total')}</th><th><span class="sr-only">${t('stmt.files')}</span></th></tr></thead>
+      <tbody>${list.map((i) => h`<tr class="${ctx.state.fresh === i.id || ctx.state.flashInv === i.id ? 'new-row' : ''}" data-inv-row="${i.id}"><td class="mono strong nowrap" translate="no">${i.id}${i.demo ? h` <span class="chip chip-navy">${t('common.demoTag')}</span>` : ''}<span class="hint-xs bl-block bl-m-only">${invType(ctx, i)}</span></td>
+        <td class="nowrap bl-d-only">${i.plan ? h`<span class="chip chip-info">${invType(ctx, i)}</span>` : invType(ctx, i)}</td><td class="nowrap">${tableDate(ctx, i.date)}</td>
         <td class="num mono">${fmt.int(i.credits)}${i.bonus ? h` <span class="hint-xs">+${fmt.int(i.bonus)} ${t('inv.bonus')}</span>` : ''}</td><td class="num mono">${fmt.credits2(i.net)}</td><td class="num mono">${fmt.credits2(i.vat)}</td><td class="num mono strong">${fmt.credits2(i.total)}</td>
         <td class="num nowrap"><button type="button" class="btn btn-sm" data-action="bl.inv.download" data-value="${i.id}">${icon('file-text')}${t('inv.download')}</button>
           <button type="button" class="btn btn-sm" data-action="bl.inv.csv" data-value="${i.id}">${icon('download')}${t('inv.csv')}</button></td></tr>`)}</tbody></table></div>
@@ -501,6 +673,7 @@ export function render(ctx) {
   if (ctx.state._raw !== ctx.params.raw) { ctx.state._raw = ctx.params.raw; ctx.state._handled = false; }
   const pp = postpaid();
   return h`<div class="page bl">${header(ctx)}${nudgeBanner(ctx)}${tiles(ctx)}
+    ${pp ? upcomingCard(ctx) : ''}
     ${commitCard(ctx)}
     <div class="grid g-2 bl-row2">${modeCard(ctx)}${offersCard(ctx)}</div>
     <div class="grid bl-row1">${chartCard(ctx)}${usageCard(ctx)}</div>
@@ -535,10 +708,10 @@ function rateCardCsv(ctx) {
 }
 
 function usageCsv(ctx) {
-  const usage = ctx.list('billing.usage');
+  const usage = usageRows(ctx);
   // SMS, LINE and Email show credits only: their unit prices belong to their own consoles, not to this demo.
   const rows = usage.map((u) => (u.product === 'voice' ? { product: `voice:${u.item}`, quantity: u.quantity, unit: u.unit, credits: u.credits.toFixed(2) } : { product: u.product, quantity: '', unit: '', credits: u.credits.toFixed(2) }));
-  const d = demoSpend(ctx);
+  const d = demoCalls(ctx);
   if (d) rows.push({ product: 'voice:demo-session', quantity: '', unit: '', credits: d.toFixed(2) });
   if (!rows.length) rows.push({ product: '', quantity: 0, unit: '', credits: '0.00' });
   ctx.ui.csv(`ants-usage_${CUR_PERIOD}.csv`, rows, ['product', 'quantity', 'unit', 'credits']);
@@ -553,7 +726,7 @@ function statementCsv(ctx, period) {
     sip_code: c.sip ?? '', q850: c.q850 ?? '', talk_seconds: c.sec || 0, billed: c.billedMin || 0, credits: (c.credits || 0).toFixed(2), recording: c.recorded ? 'yes' : 'no', route: c.route || '',
     campaign_id: c.source && c.source.type === 'campaign' ? c.source.ref : '', dtmf: c.keys || '', reason_text: c.reason ? ctx.loc(c.reason) : '',
   }));
-  const usage = ctx.list('billing.usage');
+  const usage = usageRows(ctx);
   const fee = (item) => usage.find((u) => u.item === item);
   if (period === CUR_PERIOD) {
     for (const item of ['numbers', 'extraConcurrent']) {
@@ -592,25 +765,33 @@ ${totals.map(([a, c], i) => `<tr class="${i === totals.length - 1 ? 'tot' : ''}"
 
 function invoiceHtml(ctx, inv) {
   const { t, fmt } = ctx;
+  const plan = inv.plan ? { min: fmt.int(inv.minutes || inv.credits), rate: fmt.rate(inv.rate || 0), month: monthLabel(ctx, inv.period || String(inv.date).slice(0, 7)) } : null;
   printable(ctx, {
     title: t('print.invoiceTitle', { id: inv.id }),
     filename: `${inv.id}-sample.html`,
-    meta: [[t('inv.no'), inv.id], [t('inv.date'), fmt.dateProse(inv.date)], [t('print.payment'), t('print.paid')]],
-    lines: [[t('print.creditsLine'), fmt.int(inv.credits), fmt.credits2(inv.net)], ...(inv.bonus ? [[t('print.bonusLine'), fmt.int(inv.bonus), '0.00']] : [])],
+    meta: [[t('inv.no'), inv.id], [t('inv.type'), invType(ctx, inv)], [t('inv.date'), fmt.dateProse(inv.date)], [t('print.payment'), t('print.paid')]],
+    lines: plan ? [[t('print.planLine', plan), `${plan.min} ${t('minv.min')}`, fmt.credits2(inv.net)]]
+      : [[t('print.creditsLine'), fmt.int(inv.credits), fmt.credits2(inv.net)], ...(inv.bonus ? [[t('print.bonusLine'), fmt.int(inv.bonus), '0.00']] : [])],
     totals: [[t('inv.net'), fmt.credits2(inv.net)], [t('inv.vat'), fmt.credits2(inv.vat)], [t('print.totalThb'), fmt.credits2(inv.total)]],
-    note: t('print.creditUnit'),
+    note: plan ? t('print.planNote') : t('print.creditUnit'),
   });
+}
+function invoiceCsv(ctx, inv) {
+  const row = inv.plan
+    ? { invoice: inv.id, date: inv.date, item: `commitment_plan_${inv.minutes || ''}`, quantity: inv.minutes || '', unit: 'minute', rate: (inv.rate || 0).toFixed(2), credits: inv.credits, bonus_credits: 0 }
+    : { invoice: inv.id, date: inv.date, item: 'credits_topup', quantity: inv.credits, unit: 'credit', rate: '1.00', credits: inv.credits, bonus_credits: inv.bonus || 0 };
+  ctx.ui.csv(`${inv.id}-sample.csv`, [{ ...row, amount_before_vat: inv.net.toFixed(2), vat_7: inv.vat.toFixed(2), total_thb: inv.total.toFixed(2), note: 'SAMPLE - not a tax invoice' }]);
 }
 
 function monthlyInvoiceHtml(ctx, x) {
   const { t, fmt } = ctx;
   const rate = creditRate().thb || 1;
-  const line = (l) => [t(`minv.line.${l.kind}`), l.quantity != null ? `${fmt.int(l.quantity)} ${l.unit === 'min' ? t('minv.min') : ''}`.trim() : '', fmt.credits2(l.credits)];
+  const line = (l) => [t(`minv.line.${l.kind}`), lineQty(ctx, l, true), fmt.credits2(l.credits)];
   printable(ctx, {
     title: t('minv.printTitle', { id: x.id, month: monthLabel(ctx, x.period) }),
     filename: `${x.id}-sample.html`,
     meta: [[t('minv.no'), x.id], [t('stmt.period'), monthLabel(ctx, x.period)], [t('minv.issued'), x.issued ? fmt.dateProse(x.issued) : '—'], [t('minv.dueOn'), x.due ? fmt.dateProse(x.due) : '—']],
-    lines: (x.lines.length ? x.lines : [{ kind: 'usage', credits: x.amount }]).filter((l) => l.credits || l.kind === 'plan' || l.kind === 'usage').map(line),
+    lines: (x.lines.length ? x.lines : [{ kind: 'usage', credits: x.amount }]).filter((l) => l.credits || ['plan', 'planMinutes', 'usage'].includes(l.kind)).map(line),
     totals: [[t('minv.credits'), fmt.credits2(x.amount)], [t('inv.net'), fmt.credits2(x.net ?? x.amount * rate)], [t('inv.vat'), fmt.credits2(x.vat ?? 0)], [t('print.totalThb'), fmt.credits2(x.total ?? 0)]],
     note: t('minv.printNote', { thb: fmt.rate(rate) }),
   });
@@ -625,7 +806,10 @@ function statementHtml(ctx, period) {
     title: t('print.stmtTitle', { month: monthLabel(ctx, period) }),
     filename: `ants-statement-${period}-sample.html`,
     meta: [[t('stmt.period'), monthLabel(ctx, period)], [t('stmt.status'), s.status === 'current' ? t('stmt.current') : t('stmt.closed')], [t('print.scope'), t(`stmt.seg.${voiceOnly ? 'voice' : 'all'}`)]],
-    lines: [[t('stmt.opening'), '', fmt.credits2(s.opening)], [t('stmt.topups'), '', fmt.credits2(s.topUps)], [t('stmt.bonus'), '', fmt.credits2(s.bonus)], ...(s.planCredits ? [[t('stmt.planCredits'), '', fmt.credits2(s.planCredits)]] : []), [voiceOnly ? t('stmt.usedVoice') : t('stmt.used'), '', `−${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}`]],
+    lines: [[t('stmt.opening'), '', fmt.credits2(s.opening)], [t('stmt.topups'), '', fmt.credits2(s.topUps)], [t('stmt.bonus'), '', fmt.credits2(s.bonus)], ...(s.planCredits ? [[t('stmt.planCredits'), '', fmt.credits2(s.planCredits)]] : []), [voiceOnly ? t('stmt.usedVoice') : t('stmt.used'), '', `−${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}`],
+      // The current month itemises "used" with the same rows as Billing › Usage (number fees live from Numbers).
+      ...(s.status === 'current' ? usageRows(ctx).filter((u) => !voiceOnly || u.product === 'voice').map((u) => [`· ${t(`usage.item.${u.item}`)}`, u.product === 'voice' ? lineQty(ctx, { quantity: u.quantity, unit: u.unit }) : '', fmt.credits2(u.credits)])
+        .concat(demoCalls(ctx) ? [[`· ${t('usage.item.demo')}`, '', fmt.credits2(demoCalls(ctx))]] : []) : [])],
     totals: [[t('stmt.closing'), fmt.credits2(s.closing)]],
     note: t('print.stmtNote'),
   });
@@ -733,7 +917,7 @@ export function mount(root, ctx) {
     'bl.topup': () => ctx.ui.topup({ source: 'billing' }),
     'bl.inv.topup': () => ctx.ui.topup({ source: 'billing' }),
     'bl.export': () => usageCsv(ctx),
-    'bl.tile.month': () => scrollTo(root, 'usage'),
+    'bl.tile.month': () => scrollTo(root, postpaid() ? 'upcoming' : 'usage'),
     'bl.tile.limit': () => ctx.ui.spendingLimits(),
     'bl.tile.auto': () => autoTopUp(ctx),
     'bl.limits.edit': () => ctx.ui.spendingLimits(),
@@ -776,10 +960,21 @@ export function mount(root, ctx) {
     'bl.stmt.csv': (el) => statementCsv(ctx, el.dataset.value),
     'bl.stmt.pdf': (el) => statementHtml(ctx, el.dataset.value),
     'bl.inv.download': (el) => { const inv = invoices(ctx).find((i) => i.id === el.dataset.value); if (inv) invoiceHtml(ctx, inv); },
-    'bl.inv.csv': (el) => {
-      const inv = invoices(ctx).find((i) => i.id === el.dataset.value);
-      if (!inv) return;
-      ctx.ui.csv(`${inv.id}-sample.csv`, [{ invoice: inv.id, date: inv.date, item: 'credits_topup', credits: inv.credits, bonus_credits: inv.bonus || 0, amount_before_vat: inv.net.toFixed(2), vat_7: inv.vat.toFixed(2), total_thb: inv.total.toFixed(2), note: 'SAMPLE - not a tax invoice' }]);
+    'bl.inv.csv': (el) => { const inv = invoices(ctx).find((i) => i.id === el.dataset.value); if (inv) invoiceCsv(ctx, inv); },
+    'bl.stmt.planinv': (el) => {
+      const id = el.dataset.value;
+      ctx.setState({ flashInv: id });
+      scrollTo(root, 'invoices');
+      const row = root.querySelector(`[data-inv-row="${id}"]`);
+      if (row) row.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
+      setTimeout(() => { if (ctx.state.flashInv === id) ctx.state.flashInv = null; }, 2000);
+    },
+    'bl.up.preview': () => { const x = monthlyInvoices().find((i) => i.status === 'open'); if (x) monthlyInvoiceHtml(ctx, x); },
+    'bl.plan.alert': (el) => {
+      const level = Number(el.dataset.value);
+      const on = !planAlerts()[level];
+      const r = setPlanAlert(level, on);
+      ctx.ui.toast(on ? t(r.sent ? 'burn.alertSent' : 'burn.alertOn', { pct: level }) : t('burn.alertOff', { pct: level }), { kind: on ? 'success' : 'info', demo: true });
     },
   });
   // Keyboard: Enter / Space on a clickable usage row.

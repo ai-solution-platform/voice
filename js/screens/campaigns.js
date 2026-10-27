@@ -364,10 +364,17 @@ function estimateFor(w, subId) {
   const lastShare = smsKey && last.c && last.c.keys && last.c.keys[smsKey] === 'sms-link' && last.k && last.k.keys && last.k.answered ? (last.k.keys[smsKey] || 0) / last.k.answered : null;
   const smsMax = smsKey ? toCall : 0;
   const smsExpected = smsKey && lastShare != null ? Math.round(toCall * (last.pct / 100) * lastShare) : null;
+  // Fallback after the last retry: one SMS / LINE message to each number that ends as "No answer". Worst case every
+  // number; expected from the last similar campaign's no-answer share. Counted, never priced (no published SMS rate).
+  const fb = w.fb ? (w.fbChannel || 'sms') : null;
+  const lastFin = last.k ? (last.k.answered || 0) + (last.k.noAnswer || 0) + (last.k.busy || 0) + (last.k.failed || 0) : 0;
+  const noAnsShare = lastFin ? (last.k.noAnswer || 0) / lastFin : Math.max(0, 1 - last.pct / 100) * 0.6;
+  const fbMax = fb ? toCall : 0;
+  const fbExpected = fb ? Math.round(toCall * noAnsShare) : 0;
   const bal = balance();
   const usedToday = store.get('mode') === 'active' ? (store.get('billing.usedToday.total') || 0) : 0;
   const daily = store.get('limits.daily') || 0;
-  return { toCall, sec, minutes, maxMinutes, paths: p, perMin, perCall, perCallMax, max, expected, usedAvg: !!useAvg && perAnswered > perCall, avg: useAvg ? round2(perAnswered) : null, smsMax, smsExpected, pct: last.pct, lastName: last.name, head, unbounded: p.unbounded, balanceAfter: round2(bal - expected), balanceAfterMax: max == null ? null : round2(bal - max), usedToday, daily, dailyAfter: round2(usedToday + head), short: head > bal ? Math.ceil((head - bal) / 100) * 100 : 0, overDaily: daily && usedToday + head > daily, plan: comparePlans(toCall * minutes) };
+  return { toCall, sec, minutes, maxMinutes, paths: p, perMin, perCall, perCallMax, max, expected, usedAvg: !!useAvg && perAnswered > perCall, avg: useAvg ? round2(perAnswered) : null, smsMax, smsExpected, fb, fbMax, fbExpected, pct: last.pct, lastName: last.name, head, unbounded: p.unbounded, balanceAfter: round2(bal - expected), balanceAfterMax: max == null ? null : round2(bal - max), usedToday, daily, dailyAfter: round2(usedToday + head), short: head > bal ? Math.ceil((head - bal) / 100) * 100 : 0, overDaily: daily && usedToday + head > daily, plan: comparePlans(toCall * minutes) };
 }
 
 // ---------- the run engine (module level: a campaign keeps calling while you look at other screens) ----------
@@ -430,7 +437,7 @@ function runRecipient(run, x, i) {
     const o = run.order[i];
     const oc = OUTCOME[o.cat];
     const cost = attemptCost(run, o, i);
-    return { ...base, status: oc.status, sip: oc.sip, q850: oc.q850, attempt: 1, at: run.at[i], key: o.key, sec: cost.sec, credits: cost.credits, transferred: isTransfer(cost.act), optedOut: cost.act === 'opt-out', callId: run.callIds[i] };
+    return { ...base, status: oc.status, sip: oc.sip, q850: oc.q850, attempt: 1, at: run.at[i], key: o.key, sec: cost.sec, credits: cost.credits, transferred: isTransfer(cost.act), optedOut: cost.act === 'opt-out', callId: run.callIds[i], fbSent: run.fallback && o.cat === 'noAnswer' ? run.fallback : null };
   }
   if (i < run.dialled) return { ...base, status: i % 3 === 0 ? 'in-progress' : 'ringing', attempt: 1, at: run.at[i] || nowMs(), sec: 0, credits: 0 };
   return { ...base, status: run.stopped ? 'canceled' : 'queued', attempt: 0, at: null, sec: 0, credits: 0 };
@@ -452,6 +459,7 @@ function startRun(c, { est, ui, t }) {
     id: c.id, total, order: outcomeOrder(total, hash(c.id) ^ total), dialled: 0, finished: 0, paused: false, stopped: false, spent: 0, due: 0, billed: 0,
     at: [], callIds: [], timer: null, step: Math.max(1, Math.ceil(total / RUN_TICKS)), conc: Math.min(c.concurrent || 20, 20), sub: c.sub, callerId: c.callerId,
     minutes: est.minutes, perMin: est.perMin, msgSec: est.sec, baseSec: est.sec + 2, transferMin: Number(c.transferMin) || 0, actions: c.keys || {}, kind: (c.script && c.script.kind) || 'reminder',
+    fallback: c.fallback ? c.fallback.channel || 'sms' : null, realStart: Date.now(), // real time, only to say how long the demo took
   };
   RUNS.set(c.id, run);
   run.timer = setInterval(() => tick(run), TICK_MS);
@@ -522,7 +530,14 @@ function settle(run, c, target) {
 function finishRun(run, counts) {
   clearInterval(run.timer);
   const answeredPct = Math.round((answerRate(counts) || 0) * 10) / 10;
-  updateCamp(run.id, (x) => ({ ...x, status: 'completed', finishedAt: new Date(nowMs()).toISOString(), progressPct: 100, result: { answered: counts.answered, answeredPct, noAnswer: counts.noAnswer, busy: counts.busy, failed: counts.failed }, balanceAfter: balance() }));
+  // The demo plays the whole list in about 45 s: the finish is stamped with the real pace (the ETA shown at launch),
+  // and the detail page says how long the demo took — never the launch minute again.
+  const demoRunSec = Math.max(1, Math.round((Date.now() - run.realStart) / 1000));
+  updateCamp(run.id, (x) => {
+    const eta = x.expectedFinish ? Date.parse(x.expectedFinish) : null;
+    const fin = eta && eta > nowMs() ? eta : nowMs();
+    return { ...x, status: 'completed', finishedAt: new Date(fin).toISOString(), demoRunSec, progressPct: 100, result: { answered: counts.answered, answeredPct, noAnswer: counts.noAnswer, busy: counts.busy, failed: counts.failed, fallbackSent: run.fallback ? counts.noAnswer : undefined }, balanceAfter: balance() };
+  });
   const c = findCamp(run.id);
   audit('campaign.finished', { answered: counts.answered, credits: run.spent }, run.id);
   notify('campaignFinished', { vars: { campaign: run.id, pct: Math.round(answeredPct) }, href: `campaigns/${run.id}` });
@@ -566,11 +581,31 @@ function exportRecipients(c, { t, ui }, rowsIn) {
     { key: 'talk_seconds', label: 'talk_seconds', value: (r) => r.sec || 0 },
     { key: 'credits', label: 'credits', value: (r) => (r.credits || 0).toFixed(2) },
     { key: 'reason_text', label: 'reason_text', value: (r) => REASON_OF(r, t) },
+    ...(c.fallback ? [{ key: 'fallback_sent', label: 'fallback_sent', value: (r) => (r.fbSent || (r.status === 'no-answer' && c.status === 'completed' ? c.fallback.channel || 'sms' : '')) }] : []),
   ]);
   return rows.length;
 }
 
 // ---------- shared bits ----------
+/** "SMS" / "LINE" in the current language. */
+const chName = (ctx, ch) => ctx.t(`fb.ch.${ch === 'line' ? 'line' : 'sms'}`);
+/** Fallback messages sent so far: one per number that ended as "No answer" (null when the rule is off). */
+function fallbackSent(c, k) {
+  if (!c || !c.fallback) return null;
+  if (c.result && c.result.fallbackSent != null) return c.result.fallbackSent;
+  return (k || countsOf(c)).noAnswer || 0;
+}
+/** Step 3 rule: "If not answered after the last retry → send SMS / LINE" (off by default). */
+function fallbackRule(ctx, w) {
+  const { t, html: h } = ctx;
+  return h`<div class="field cp-fb ${w.fb ? 'is-on' : ''}" data-inv="wc.3.fallback">
+    <div class="row cp-fb-head"><div class="grow stack" style="gap:2px"><span class="label" id="cp-fb-l">${t('s3.fb.title')}</span>
+      <span class="hint-xs">${w.fb ? (w.retries ? t('s3.fb.whenN', { count: w.retries, n: w.retries, total: w.retries + 1 }) : t('s3.fb.when0')) : t('s3.fb.offH')}</span></div>
+      <button type="button" class="toggle" role="switch" data-action="wc.3.fb" aria-checked="${w.fb}" aria-labelledby="cp-fb-l"></button></div>
+    ${w.fb ? h`<div class="row cp-fb-ch"><span class="hint-xs">${t('s3.fb.by')}</span><div class="seg seg-sm" role="group" aria-label="${t('s3.fb.by')}">${['sms', 'line'].map((ch) => h`<button type="button" data-action="wc.3.fbch" data-value="${ch}" aria-pressed="${w.fbChannel === ch}">${chName(ctx, ch)}</button>`)}</div></div>
+      <span class="hint-xs">${t('s3.fb.what', { channel: chName(ctx, w.fbChannel) })}</span>` : ''}
+    <span class="hint-xs cp-fb-price">${t('s3.fb.price')}</span></div>`;
+}
 function statusChip(ctx, c) {
   const { t, html: h, icon } = ctx;
   const map = { draft: ['', 'edit'], scheduled: ['chip-info', 'calendar'], running: ['chip-ok', 'dot'], paused: ['chip-warn', 'pause'], completed: ['chip-navy', 'check-circle'], canceled: ['', 'x-circle'] };
@@ -660,7 +695,7 @@ function listRow(ctx, c) {
   if (c.status === 'running' || c.status === 'paused') when = t('when.running', { start: fmt.timeShort(c.startedAt), end: c.expectedFinish ? fmt.timeShort(c.expectedFinish) : '—' });
   else if (c.status === 'scheduled') when = t('when.scheduled', { at: dtShort(ctx, c.scheduledFor) });
   else if (c.status === 'draft') when = t('when.draft', { date: fmt.dayMonth(c.savedAt || nowMs()), name: c.savedBy || '' });
-  else when = dtShort(ctx, c.finishedAt || c.canceledAt || c.startedAt || nowMs());
+  else when = `${c.demoRunSec && c.status === 'completed' ? '≈ ' : ''}${dtShort(ctx, c.finishedAt || c.canceledAt || c.startedAt || nowMs())}`;
   const credits = ['draft', 'scheduled'].includes(c.status) ? (est.max == null ? t('credits.about', { n: fmt.credits2(est.expected) }) : t('credits.upTo', { n: fmt.credits2(est.max) })) : fmt.credits2(k.credits || c.credits || 0);
   return h`<tr class="${c.fresh ? 'new-row' : ''}">
     <td class="cp-name"><a href="#/campaigns/${['draft', 'scheduled'].includes(c.status) ? `new?draft=${c.id}` : c.id}" data-action="cp.row" data-value="${c.id}" class="strong">${loc(c.name)}</a>
@@ -691,7 +726,7 @@ function openRowMenu(ctx, el) {
 function duplicate(ctx, c) {
   const { t } = ctx;
   const name = typeof c.name === 'object' ? Object.fromEntries(LANG_ORDER.map((l) => [l, tIn(l, 'campaigns.copyName', { name: c.name[l] || c.name.en })])) : t('copyName', { name: c.name });
-  const copy = { id: newId('bc'), name, sub: c.sub, callerId: c.callerId, purpose: c.purpose, status: 'draft', savedAt: new Date(nowMs()).toISOString(), savedBy: store.get('user.name'), toCall: c.list ? c.list.length : 0, list: c.list || null, script: c.script || { kind: SCRIPT_OF[c.id] || 'reminder', lang: 'th' }, keys: c.keys, hours: c.hours, retries: c.retries, retryAfterMin: c.retryAfterMin, cps: c.cps, concurrent: c.concurrent, file: c.file || null, rows: c.list ? c.list.length : 0, fresh: true, copyOf: c.id };
+  const copy = { id: newId('bc'), name, sub: c.sub, callerId: c.callerId, purpose: c.purpose, status: 'draft', savedAt: new Date(nowMs()).toISOString(), savedBy: store.get('user.name'), toCall: c.list ? c.list.length : 0, list: c.list || null, script: c.script || { kind: SCRIPT_OF[c.id] || 'reminder', lang: 'th' }, keys: c.keys, hours: c.hours, retries: c.retries, retryAfterMin: c.retryAfterMin, fallback: c.fallback || null, cps: c.cps, concurrent: c.concurrent, file: c.file || null, rows: c.list ? c.list.length : 0, fresh: true, copyOf: c.id };
   store.update('campaigns', (l) => [copy, ...(l || [])]);
   ctx.ui.toast(t('toast.T03'), { kind: 'success', timeout: 8000, action: { label: t('openDraft'), onClick: () => ctx.go(`campaigns/new?draft=${copy.id}`) } });
 }
@@ -768,6 +803,7 @@ function freshWizard(draft) {
     keys: draft && draft.keys ? Object.entries(draft.keys).map(([k, a]) => ({ key: k, action: a === 'staff' ? 'transfer' : a })) : [{ key: '1', action: 'confirm' }, { key: '2', action: 'sms-link' }, { key: '9', action: 'opt-out' }],
     start: draft && draft.status === 'scheduled' ? 'schedule' : 'now', date: draft && draft.scheduledFor ? isoDateOf(draft.scheduledFor) : '2026-10-28', time: draft && draft.scheduledFor ? hhmmOf(Date.parse(draft.scheduledFor)) : '10:00',
     hoursFrom: '09:00', hoursTo: '18:00', days: [1, 2, 3, 4, 5, 6], retries: draft && draft.retries != null ? draft.retries : 2, wait: draft && draft.retryAfterMin ? draft.retryAfterMin : 30,
+    fb: !!(draft && draft.fallback), fbChannel: (draft && draft.fallback && draft.fallback.channel) || 'sms', // off unless the campaign has the rule
     cps: PRICES.cpsDefault, conc: draft && draft.concurrent ? draft.concurrent : 20, cap: 1, transferMin: (draft && Number(draft.transferMin)) || 0, dnc: 'idle', typed: '', launching: null, playing: false, scheduledStatus: draft ? draft.status : null,
   };
   return base;
@@ -958,6 +994,7 @@ function step3(ctx, w) {
           <button type="button" data-action="wc.3.retry" data-value="1" aria-label="${t('s3.more')}" ${raw(w.retries >= 3 ? 'aria-disabled="true"' : '')}>${icon('plus', 'ico-sm')}</button></div>
           <div class="seg seg-sm" role="group" aria-label="${t('s3.wait')}">${[15, 30, 60].map((m) => h`<button type="button" data-action="wc.3.wait" data-value="${m}" aria-pressed="${w.wait === m}" ${raw(w.retries ? '' : 'aria-disabled="true"')}>${t('s3.waitN', { n: m })}</button>`)}</div></div>
           <span class="hint-xs">${w.retries ? t('s3.retryHint', { n: w.retries, m: w.wait }) : t('s3.noRetry')}</span></div>
+        ${fallbackRule(ctx, w)}
         <div class="grid g-2">
           <div class="field"><span class="label">${ctx.term(t('s3.cps'), 'cps')}</span><div class="stepper">
             <button type="button" data-action="wc.3.cps" data-value="-1" aria-label="${t('s3.fewer')}" ${raw(w.cps <= 1 ? 'aria-disabled="true"' : '')}>${icon('minus', 'ico-sm')}</button><output aria-live="polite">${w.cps}</output>
@@ -1035,12 +1072,13 @@ function step4(ctx, w) {
       <div class="card cp-sum">${summary(1, t('s4.audience'), a ? t('s4.audienceV', { n: fmt.int(a.toCall), file: a.file || t('s1.pasted') }) : '—')}
         ${summary(2, t('s4.message'), w.mode === 'audio' ? (w.audioFile ? w.audioFile.name : '—') : t('s4.messageV', { lang: LANGS[w.lang].label, voice: w.voice === 'premium' ? t('s2.premium') : t('s2.standard'), sec: e.sec }))}
         ${summary(2, t('s4.keys'), w.keys.map((k) => `${k.key} ${t(`key.${k.action}`, { key: k.key })}`).join(' · '))}
-        ${summary(3, t('s4.schedule'), `${startLineOf(ctx, w)} · ${w.purpose === 'payment' ? t('s3.lockedShort') : `${w.hoursFrom}–${w.hoursTo}`} · ${t('s4.retriesV', { n: w.retries, m: w.wait })}`)}</div>
+        ${summary(3, t('s4.schedule'), `${startLineOf(ctx, w)} · ${w.purpose === 'payment' ? t('s3.lockedShort') : `${w.hoursFrom}–${w.hoursTo}`} · ${t('s4.retriesV', { n: w.retries, m: w.wait })}`)}
+        ${summary(3, t('s4.fallback'), w.fb ? t('s4.fallbackV', { channel: chName(ctx, w.fbChannel) }) : t('s4.fallbackOff'))}</div>
       ${sandbox ? h`<div class="note note-warn" role="status">${icon('alert')}<div class="grow stack" style="gap:6px"><span>${t('s4.sandbox')}</span>
           <div class="row"><button type="button" class="btn btn-sm btn-primary" data-action="wc.golive">${t('top.goLive')}</button>
           <button type="button" class="btn btn-sm" data-action="wc.testme">${icon('phone', 'ico-sm')}${t('s4.testMe')}</button></div></div></div>` : ''}
       ${!sandbox ? h`<div class="card card-pad cp-confirm" id="cp-confirm">
-        <label class="field"><span class="label">${e.max == null ? t('s4.typeLabelAbout', { token, n: fmt.int(e.toCall), exp: fmt.credits2(e.expected) }) : t('s4.typeLabel', { token, n: fmt.int(e.toCall), max: fmt.credits2(e.max) })}${e.smsMax ? ` ${t('s4.typeSms', { sms: fmt.int(e.smsMax) })}` : ''}</span>
+        <label class="field"><span class="label">${e.max == null ? t('s4.typeLabelAbout', { token, n: fmt.int(e.toCall), exp: fmt.credits2(e.expected) }) : t('s4.typeLabel', { token, n: fmt.int(e.toCall), max: fmt.credits2(e.max) })}${e.smsMax ? ` ${t('s4.typeSms', { sms: fmt.int(e.smsMax) })}` : ''}${e.fb ? ` ${t('s4.typeFb', { n: fmt.int(e.fbMax), channel: chName(ctx, e.fb) })}` : ''}</span>
           <input class="input mono cp-typed ${ok ? 'is-ok' : ''}" data-field="wcTyped" data-action="wc.4.confirm" value="${w.typed}" inputmode="numeric" autocomplete="off" spellcheck="false" aria-describedby="cp-typed-hint" placeholder="${token}"></label>
         <span class="hint-xs" id="cp-typed-hint">${ok ? t('s4.typedOk') : t('confirm.typedHint')}</span>
         ${w.launching != null ? h`<ol class="cp-launchseq" aria-live="polite">${['check', 'reserve', 'start'].map((k, i) => h`<li class="${i < w.launching ? 'is-done' : i === w.launching ? 'is-run' : ''}">${i < w.launching ? icon('check-circle', 'ico-sm') : i === w.launching ? raw('<span class="spin" aria-hidden="true"></span>') : icon('dot', 'ico-sm')}${t(`s4.seq.${k}`)}</li>`)}</ol>` : ''}
@@ -1068,6 +1106,8 @@ function costCard(ctx, w, e) {
       ${e.lastName ? h`<p class="hint-xs cp-cost-sub">${t('cost.expectedFrom', { name: loc(e.lastName) })}${e.usedAvg ? ` ${t('cost.expectedAvg', { avg: fmt.rate(e.avg) })}` : ''}</p>` : ''}
       ${e.smsMax ? h`<div class="kv"><span class="k">${t('cost.sms')}</span><span class="v">${e.smsExpected != null ? t('cost.smsV', { max: fmt.int(e.smsMax), exp: fmt.int(e.smsExpected) }) : t('cost.smsVMax', { max: fmt.int(e.smsMax) })}</span></div>
         <p class="hint-xs cp-cost-sub">${t('cost.smsHint')}</p>` : ''}
+      ${e.fb ? h`<div class="kv cp-fb-line" data-inv="wc.4.fallback"><span class="k">${t('cost.fb', { channel: chName(ctx, e.fb) })}</span><span class="v">${t('cost.fbV', { max: fmt.int(e.fbMax), exp: fmt.int(e.fbExpected) })}</span></div>
+        <p class="hint-xs cp-cost-sub">${t('cost.fbHint', { channel: chName(ctx, e.fb) })}</p>` : ''}
       <div class="kv"><span class="k">${t('cost.balanceAfter')}</span><span class="v">≈ ${fmt.credits2(e.balanceAfter)}</span></div>
       ${e.balanceAfterMax != null ? h`<p class="hint-xs cp-cost-sub">${t('cost.balanceAfterMax', { n: fmt.credits2(e.balanceAfterMax) })}</p>` : ''}
       ${e.daily ? h`<div class="kv"><span class="k">${t('cost.daily', { limit: fmt.int(e.daily) })}</span><span class="v ${e.overDaily ? 'err-text' : 'ok-text'}">${e.overDaily ? t('cost.dailyOver') : t('cost.dailyOk')}</span></div>
@@ -1083,7 +1123,9 @@ function costCard(ctx, w, e) {
 function btnLabel(ctx, e, kind) {
   const { t, fmt } = ctx;
   const base = e.max == null ? t(kind === 'schedule' ? 's4.scheduleBtnAbout' : 's4.launchAbout', { exp: fmt.credits2(e.expected) }) : t(kind === 'schedule' ? 's4.scheduleBtn' : 's4.launch', { max: fmt.credits2(e.max) });
-  return e.smsMax ? `${base} ${t('s4.plusSms')}` : base;
+  const sms = e.smsMax || e.fb === 'sms';
+  const line = e.fb === 'line';
+  return sms && line ? `${base} ${t('s4.plusSmsLine')}` : sms ? `${base} ${t('s4.plusSms')}` : line ? `${base} ${t('s4.plusLine')}` : base;
 }
 function launchButton(ctx, w) {
   const { t, html: h, icon, fmt } = ctx;
@@ -1111,6 +1153,7 @@ function recordFromWizard(ctx, w, status) {
     duplicates: w.audience ? w.audience.duplicates : 0, dnc: w.audience ? w.audience.dnc : 0, toCall: w.audience ? w.audience.toCall : (existing && existing.toCall) || 0,
     list: list || (existing && existing.list) || null, messageSec: e.sec, minutes: e.minutes,
     keys: Object.fromEntries(w.keys.map((k) => [k.key, k.action])), hours: w.purpose === 'payment' ? 'debt-collection' : `${w.hoursFrom}–${w.hoursTo}`, days: w.days, retries: w.retries, retryAfterMin: w.wait, cps: w.cps, concurrent: w.conc, cap: w.cap, transferMin: w.transferMin,
+    fallback: w.fb ? { channel: w.fbChannel || 'sms', after: 'last-retry', when: 'no-answer' } : null,
     script: { kind: w.kind, lang: w.lang, text: w.text, premium: w.voice === 'premium', mode: w.mode, audio: w.audioFile ? w.audioFile.name : null },
     estimate: { max: e.max, expected: e.expected, expectedPct: e.pct, balanceAfter: e.balanceAfter, balanceAfterMax: e.balanceAfterMax, dailyAfter: e.dailyAfter }, fresh: true,
   };
@@ -1254,13 +1297,17 @@ function detailView(ctx, c) {
     </div></div>`;
   const incident = c.id === 'bc_01JBK7C1Q2' ? h`<div class="note note-info cp-incident" role="status">${icon('info')}<div class="grow">${t('d.incident')}</div>
       <a class="btn btn-sm" href="#/help/status?inc=20261027" data-action="cd.incident">${t('d.viewStatus')}</a></div>` : '';
-  const finished = done && c.result ? h`<div class="note note-ok cp-finished" role="status">${icon('check-circle')}<div class="grow">${t('d.finished', { time: dtProse(ctx, c.finishedAt || nowMs()), rate: fmt.pct(c.result.answeredPct), credits: fmt.credits2(c.credits || k.credits) })}</div>
+  const fbSent = fallbackSent(c, k);
+  const finLine = c.demoRunSec
+    ? t('d.finishedDemo', { time: fmt.timeShort(c.finishedAt), sec: fmt.int(c.demoRunSec), rate: fmt.pct(c.result ? c.result.answeredPct : 0), credits: fmt.credits2(c.credits || k.credits) })
+    : t('d.finished', { time: dtProse(ctx, c.finishedAt || nowMs()), rate: fmt.pct(c.result ? c.result.answeredPct : 0), credits: fmt.credits2(c.credits || k.credits) });
+  const finished = done && c.result ? h`<div class="note note-ok cp-finished" role="status">${icon('check-circle')}<div class="grow">${finLine}${fbSent != null ? h` · <strong data-fb-line>${t('d.fbSentLine', { channel: chName(ctx, c.fallback.channel), n: fmt.int(fbSent) })}</strong>` : ''}</div>
       <button type="button" class="btn btn-sm btn-navy" data-action="cd.done.export">${icon('download', 'ico-sm')}${t('d.export')}</button></div>` : '';
   const stopped = c.status === 'canceled' ? h`<div class="note note-warn" role="status">${icon('x-circle')}<span>${c.stopped ? t('d.stoppedLine', { time: dtProse(ctx, c.canceledAt), n: fmt.int(c.notCalled || 0) }) : t('d.canceledLine', { time: fmt.dateTime(c.canceledAt) })}</span></div>` : '';
   const lowRate = ansRate != null && ansRate < 50 && finishedCalls > 20 ? h`<p class="note note-brand">${icon('sparkles')}<span>${t('d.lowRate')} <a class="linkbtn" href="#/help/article/answer-rate-tips" data-action="cd.tips">${t('d.tips')}</a></span></p>` : '';
   const counters = [
     ['answered', k.answered, ansRate != null ? t('d.rate', { pct: fmt.pct(ansRate) }) : '', 'ok'],
-    ['noAnswer', k.noAnswer, k.phoneOff != null ? t('d.phoneOff', { n: fmt.int(k.phoneOff) }) : '', 'warn'],
+    ['noAnswer', k.noAnswer, c.fallback ? t('d.fbSub', { n: fmt.int(fbSent || 0), channel: chName(ctx, c.fallback.channel) }) : k.phoneOff != null ? t('d.phoneOff', { n: fmt.int(k.phoneOff) }) : '', 'warn'],
     ['busy', k.busy, '', 'warn'],
     ['failed', k.failed, k.f503 != null ? t('d.failedSplit', { a: fmt.int(k.f503), b: fmt.int(k.f404) }) : '', 'err'],
     ['live', k.inProgress, '', 'info'],
@@ -1342,6 +1389,8 @@ function costSummary(ctx, c, k, est) {
       ${est.expected ? h`<div class="kv"><span class="k">${t('d.expectedCost')}</span><span class="v tnum">≈ ${fmt.credits2(est.expected)}</span></div>` : ''}
       ${pace != null ? h`<div class="kv"><span class="k">${t('d.paceCost')}</span><span class="v tnum" data-pace>≈ ${fmt.credits2(pace)}</span></div>` : ''}
       ${est.paths && est.paths.unbounded ? h`<p class="hint-xs">${t('d.noCeiling')}</p>` : est.paths && est.paths.hasTransfer ? h`<p class="hint-xs">${t('d.transferNote', { n: est.paths.capMin })}</p>` : ''}
+      ${c.fallback ? h`<div class="kv cp-fb-line"><span class="k">${t('d.fbSentK', { channel: chName(ctx, c.fallback.channel) })}</span><span class="v tnum" data-fb>${fmt.int(fallbackSent(c, k) || 0)}</span></div>
+        <p class="hint-xs">${t('d.fbHint', { channel: chName(ctx, c.fallback.channel) })}</p>` : ''}
       <div class="kv"><span class="k">${t('d.settings')}</span><span class="v">${t('d.settingsV', { cps: c.cps || 2, conc: c.concurrent || 20, retries: c.retries != null ? c.retries : 2, wait: c.retryAfterMin || 30 })}</span></div>
       <p class="hint-xs">${t('cost.foot')}</p>
       <div><button type="button" class="btn btn-sm" data-action="cd.play">${ctx.icon('play', 'ico-sm')}${t('d.playMsg')}</button></div></div></section>`;
@@ -1378,7 +1427,7 @@ function recipientRow(ctx, c, r, idx) {
   return h`<tr class="${r.fresh ? 'new-row' : ''}">
     <td class="mono"><button type="button" class="linkbtn mono" data-action="cd.row" data-value="${idx}" data-phone="${r.phone}" translate="no">${r.phone}</button></td>
     <td>${r.n == null ? '—' : nameOf(r.n)}</td>
-    <td>${ctx.ui.describe.statusChip(r.status === 'canceled' ? 'canceled' : r.status)}${r.retryAt && retryable ? h` <span class="hint-xs nowrap">${t('d.retryAt', { time: hhmmOf(r.retryAt) })}</span>` : ''}</td>
+    <td>${ctx.ui.describe.statusChip(r.status === 'canceled' ? 'canceled' : r.status)}${r.retryAt && retryable ? h` <span class="hint-xs nowrap">${t('d.retryAt', { time: hhmmOf(r.retryAt) })}</span>` : ''}${r.fbSent ? h` <span class="hint-xs nowrap">${t('d.fbRow', { channel: chName(ctx, r.fbSent) })}</span>` : ''}</td>
     <td class="num mono">${r.attempt || '—'}</td>
     <td class="mono">${r.at ? fmt.time(r.at) : '—'}</td>
     <td>${r.key ? h`<span class="cp-keycap sm">${r.key}</span>${r.transferred ? h` <span class="hint-xs">${t('d.transferred')}</span>` : ''}` : '—'}</td>
@@ -1434,6 +1483,11 @@ function patchDetail(root, ctx, c) {
   for (const [key, v] of Object.entries(map)) { const el = root.querySelector(`[data-ctr="${key}"]`); if (el) { el.dataset.v = String(v); el.textContent = fmt.int(v); } }
   const fin = k.answered + k.noAnswer + k.busy + k.failed;
   const sub = root.querySelector('[data-ctr-sub="answered"]'); if (sub && fin) sub.textContent = ctx.t('d.rate', { pct: fmt.pct(answerRate(k)) });
+  if (c.fallback) {
+    const n = fallbackSent(c, k) || 0;
+    const fbv = root.querySelector('[data-fb]'); if (fbv) fbv.textContent = fmt.int(n);
+    const fbs = root.querySelector('[data-ctr-sub="noAnswer"]'); if (fbs) fbs.textContent = ctx.t('d.fbSub', { n: fmt.int(n), channel: chName(ctx, c.fallback.channel) });
+  }
   // donut + legend
   const segs = [['completed', k.answered], ['no-answer', k.noAnswer], ['busy', k.busy], ['failed', k.failed], ['live', k.inProgress], ['queued', k.queued]];
   const total = Math.max(1, segs.reduce((s, x) => s + x[1], 0));
@@ -1656,6 +1710,8 @@ function mountWizard(root, ctx) {
     },
     'wc.3.start': (el) => { w.start = el.dataset.value; dirty(); ctx.rerender(); },
     'wc.3.days': (el) => { const d = Number(el.dataset.value); w.days = w.days.includes(d) ? w.days.filter((x) => x !== d) : [...w.days, d]; dirty(); ctx.rerender(); },
+    'wc.3.fb': () => { w.fb = !w.fb; dirty(); ctx.rerender(); const b = root.querySelector('[data-action="wc.3.fb"]'); if (b) b.focus(); },
+    'wc.3.fbch': (el) => { w.fbChannel = el.dataset.value === 'line' ? 'line' : 'sms'; dirty(); ctx.rerender(); },
     'wc.3.retry': (el) => { w.retries = Math.max(0, Math.min(3, w.retries + Number(el.dataset.value))); dirty(); ctx.rerender(); },
     'wc.3.wait': (el) => { w.wait = Number(el.dataset.value); dirty(); ctx.rerender(); },
     'wc.3.cps': (el) => { w.cps = Math.max(1, Math.min(PRICES.cpsDefault, w.cps + Number(el.dataset.value))); dirty(); ctx.rerender(); },

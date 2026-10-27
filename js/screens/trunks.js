@@ -110,7 +110,8 @@ function listPage(ctx) {
   const inUse = all.reduce((x, tr) => x + (tr.status === 'active' ? tr.inUse || 0 : 0), 0);
   const cap = all.reduce((x, tr) => x + (tr.status === 'draft' ? 0 : tr.concurrent || 0), 0);
   const fees = all.reduce((x, tr) => x + (tr.status === 'draft' ? 0 : fee(tr).total), 0);
-  const calls = all.reduce((x, tr) => x + ((tr.last24h && tr.last24h.calls) || 0), 0);
+  // Seeded trunks keep their stored totals (a trunk that is down carries none); console-made trunks count their calls.
+  const calls = all.reduce((x, tr) => x + ((tr.createdAt ? stats24(ctx, tr).calls : tr.last24h && tr.last24h.calls) || 0), 0);
   const down = all.filter((tr) => tr.status === 'down');
   return h`<div class="page tk">${head}
     ${down.map((tr) => downBanner(ctx, tr))}
@@ -228,10 +229,46 @@ function eventsFor(ctx, tr) {
   return [ev(created + 2000, 'ok', 'options', { host: (tr.ips && tr.ips[0]) || SIP_HOST, ms: 12 }), ev(created, 'ok', 'activated')];
 }
 
-function callsFor(ctx, tr) {
-  return ctx.list('calls').filter((c) => (c.source && c.source.type === 'trunk' && c.source.ref === tr.name)
+/** Calls through this trunk in the environment on screen (the same set Logs shows), newest first. */
+function callsFor(ctx, tr, limit = 6) {
+  const envNow = ctx.store.get('env');
+  const all = ctx.list('calls').filter((c) => (c.env || 'live') === envNow && ((c.source && c.source.type === 'trunk' && c.source.ref === tr.name)
     || (tr.name === 'cm-branch-pbx' && c.to === '053-xxx-120')
-    || (c.source && c.source.type === 'test-call' && c.source.ref === `trunk:${tr.name}`)).slice(0, 6);
+    || (c.source && c.source.type === 'test-call' && c.source.ref === `trunk:${tr.name}`)));
+  return limit ? all.slice(0, limit) : all;
+}
+
+/** Last-24-hour totals: the seeded trunks keep their stored totals; a trunk made in this console counts its calls. */
+function stats24(ctx, tr) {
+  if (tr.last24h && !tr.createdAt) return tr.last24h;
+  const since = nowMs() - 86400000;
+  const c = callsFor(ctx, tr, 0).filter((x) => !x.ts || Date.parse(x.ts) >= since);
+  const answered = c.filter((x) => x.status === 'completed').length;
+  const pdd = c.filter((x) => x.pddMs != null);
+  return {
+    calls: c.length, outbound: c.filter((x) => x.direction === 'outbound').length, inbound: c.filter((x) => x.direction === 'inbound').length,
+    answerRatePct: c.length ? (answered / c.length) * 100 : null, pddSec: pdd.length ? pdd.reduce((s, x) => s + x.pddMs, 0) / pdd.length / 1000 : null,
+    credits: c.reduce((x, y) => x + (y.credits || 0), 0),
+  };
+}
+
+/** Logs filtered to this trunk: its own calls by source; the Chiang Mai number for the trunk that is down. */
+const logsHref = (tr) => (tr.name === 'cm-branch-pbx' ? '#/logs?number=053-xxx-120' : `#/logs?src=${encodeURIComponent(tr.name)}`);
+
+/** What happens when every destination is down — exactly what the SIP wizard (step 4) or Edit saved. */
+function fallbackOf(ctx, tr) {
+  const kind = tr.fallback || 'message';
+  if (kind === 'forward') return { kind, number: tr.forwardTo || '—' };
+  if (kind === 'hangup') return { kind };
+  const fid = tr.allDown === undefined ? 'flw_01JB5CLSD2' : tr.allDown;
+  const flow = ctx.list('flows').find((f) => f.id === fid) || null;
+  return { kind: 'message', flow, name: flow ? ctx.loc(flow.name) : ctx.t('dest.fb.defaultName') };
+}
+function fallbackText(ctx, fb) {
+  const { t } = ctx;
+  if (fb.kind === 'forward') return t('dest.fb.forward', { number: fb.number });
+  if (fb.kind === 'hangup') return t('dest.fb.hangup');
+  return `${t('dest.fb.message', { name: fb.name })} · ${fb.flow ? t('dest.fb.flowV', { v: fb.flow.live || 1 }) : t('dest.fb.default')}`;
 }
 
 function configRows(ctx, tr) {
@@ -333,13 +370,8 @@ function capacityCard(ctx, tr) {
 
 function statsCard(ctx, tr) {
   const { t, html: h, fmt } = ctx;
-  let s = tr.last24h;
-  if (!s) { // no stored totals (e.g. a trunk that is down): count the calls we have
-    const c = callsFor(ctx, tr);
-    const answered = c.filter((x) => x.status === 'completed').length;
-    s = { calls: c.length, outbound: c.filter((x) => x.direction === 'outbound').length, inbound: c.filter((x) => x.direction === 'inbound').length, answerRatePct: c.length ? (answered / c.length) * 100 : null, pddSec: null, credits: c.reduce((x, y) => x + (y.credits || 0), 0) };
-  }
-  return h`<section class="card tk-stats" aria-labelledby="tk-s-h"><div class="card-head"><h2 id="tk-s-h">${t('stats.title')}</h2><a class="btn btn-sm btn-ghost" href="#/logs?trunk=${tr.name}" data-action="td.logs">${t('stats.logs')}</a></div>
+  const s = stats24(ctx, tr);
+  return h`<section class="card tk-stats" aria-labelledby="tk-s-h"><div class="card-head"><h2 id="tk-s-h">${t('stats.title')}</h2><a class="btn btn-sm btn-ghost" href="${logsHref(tr)}" data-action="td.logs">${t('stats.logs')}</a></div>
     <div class="card-body tk-statgrid">
       <div><span class="hint-xs">${t('stats.calls')}</span><strong class="tnum">${fmt.int(s.calls || 0)}</strong><span class="hint-xs">${t('stats.split', { out: fmt.int(s.outbound || 0), inb: fmt.int(s.inbound || 0) })}</span></div>
       <div><span class="hint-xs">${ctx.term(t('stats.answer'), 'answer_rate')}</span><strong class="tnum">${s.answerRatePct != null ? fmt.pct(s.answerRatePct) : '—'}</strong></div>
@@ -350,7 +382,7 @@ function statsCard(ctx, tr) {
 
 function destCard(ctx, tr) {
   const { t, html: h } = ctx;
-  const fb = ctx.list('flows').find((f) => f.id === (tr.allDown || 'flw_01JB5CLSD2'));
+  const fb = fallbackOf(ctx, tr);
   return h`<section class="card tk-dest" aria-labelledby="tk-d-h"><div class="card-head"><h2 id="tk-d-h">${ctx.term(t('dest.title'), 'origination')}</h2></div>
     <div class="tbl-wrap"><table class="tbl tk-desttbl"><thead><tr><th class="num">${ctx.term(t('dest.prio'), 'priority_weight')}</th><th>URI</th><th class="num">${t('dest.weight')}</th><th>${t('dest.status')}</th><th class="num">${t('dest.reply')}</th><th>${t('dest.on')}</th></tr></thead>
     <tbody>${(tr.uris || []).map((u, i) => h`<tr>
@@ -360,7 +392,7 @@ function destCard(ctx, tr) {
       <td class="num mono">${u.replyMs != null && u.status !== 'off' ? `${u.replyMs} ms` : '—'}</td>
       <td><button type="button" class="toggle" role="switch" data-action="td.dest.toggle" data-value="${i}" aria-checked="${u.status !== 'off'}" aria-label="${t('dest.toggleFor', { uri: u.uri })}"></button></td></tr>`)}</tbody></table></div>
     <div class="card-foot stack" style="gap:4px"><span class="hint-xs">${ctx.term(t('dest.failover', { s: tr.failoverSec || 4 }), 'failover')}</span>
-      <span class="hint-xs">${t('dest.allDown')} <a class="linkbtn" href="#/flows/${fb ? fb.id : 'flw_01JB5CLSD2'}" data-action="td.fallback">${t('dest.fallbackFlow', { name: fb ? ctx.loc(fb.name) : '—', v: fb && fb.live ? fb.live : 1 })}</a></span>
+      <span class="hint-xs" data-tk-fallback>${t('dest.allDown')} ${fb.flow ? h`<a class="linkbtn" href="#/flows/${fb.flow.id}" data-action="td.fallback">${fallbackText(ctx, fb)}</a>` : h`<strong>${fallbackText(ctx, fb)}</strong>`}</span>
       ${tr.failovers24h && tr.failovers24h.length ? h`<span class="hint-xs">${t('dest.failovers', { n: tr.failovers24h.length, from: tr.failovers24h[0].from, to: tr.failovers24h[0].to, target: tr.failovers24h[0].target })}</span>` : ''}
 </div></section>`;
 }
@@ -389,16 +421,17 @@ function eventsCard(ctx, tr) {
 function recentCard(ctx, tr) {
   const { t, html: h, fmt } = ctx;
   const calls = callsFor(ctx, tr);
-  return h`<section class="card tk-recent" aria-labelledby="tk-r-h"><div class="card-head"><h2 id="tk-r-h">${t('recent.title')}</h2><a class="btn btn-sm" href="#/logs?trunk=${tr.name}" data-action="td.logs">${t('stats.logs')}</a></div>
+  return h`<section class="card tk-recent" aria-labelledby="tk-r-h"><div class="card-head"><h2 id="tk-r-h">${t('recent.title')}</h2><a class="btn btn-sm" href="${logsHref(tr)}" data-action="td.logs">${t('stats.logs')}</a></div>
     ${calls.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('recent.time')}</th><th>${t('recent.dir')}</th><th>${t('recent.party')}</th><th>${t('recent.status')}</th><th class="num">${t('recent.talk')}</th><th class="num">${t('recent.credits')}</th></tr></thead>
       <tbody>${calls.map((c) => h`<tr><td class="mono"><a href="#/logs?call=${c.id}" data-action="td.call.row">${fmt.time(c.ts)}</a></td><td>${ctx.ui.describe.direction(c)}</td>
         <td class="mono" translate="no">${ctx.ui.describe.party(c)}</td><td>${ctx.ui.describe.statusChip(c.status)}</td><td class="num mono">${c.sec ? fmt.duration(c.sec) : '—'}</td><td class="num mono">${fmt.credits2(c.credits || 0)}</td></tr>`)}</tbody></table></div>`
       : h`<div class="empty"><span class="hint">${t('recent.none')}</span><button type="button" class="btn btn-sm" data-action="td.test" ${raw(tr.status === 'off' || tr.status === 'draft' ? 'aria-disabled="true"' : '')}>${ctx.icon('phone', 'ico-sm')}${t('testCall')}</button></div>`}</section>`;
 }
 
+/** Where inbound calls go when the trunk is off: the message name or the forward number (null = hung up). */
 function fallbackName(ctx, tr) {
-  const f = ctx.list('flows').find((x) => x.id === (tr.allDown || 'flw_01JB5CLSD2'));
-  return f ? ctx.loc(f.name) : '—';
+  const fb = fallbackOf(ctx, tr);
+  return fb.kind === 'hangup' ? null : fb.kind === 'forward' ? fb.number : fb.name;
 }
 
 function detailPage(ctx, name) {
@@ -427,7 +460,7 @@ function detailPage(ctx, name) {
         <section class="card tk-danger" aria-labelledby="tk-x-h"><div class="card-head"><h2 id="tk-x-h">${t('danger.title')}</h2></div>
           <div class="card-body stack">${off
             ? h`<p class="hint-xs">${t('danger.offNow')}</p><div><button type="button" class="btn" data-action="td.enable">${t('off.turnOn')}</button></div>`
-            : h`<p class="hint-xs">${t('danger.body', { fallback: fallbackName(ctx, tr) })}</p>
+            : h`<p class="hint-xs">${fallbackName(ctx, tr) == null ? t('danger.bodyHangup') : t('danger.body', { fallback: fallbackName(ctx, tr) })}</p>
               <div><button type="button" class="btn btn-danger-ghost" data-action="td.disable" ${raw(draft ? 'aria-disabled="true"' : '')}>${icon('x-circle')}${t('danger.disable')}</button></div>`}
             <p class="hint-xs">${t('danger.created', { date: tr.createdAt ? fmt.dateProse(tr.createdAt) : fmt.dateProse(tr.name === 'hq-pbx' ? '2026-09-14' : '2026-10-14') })}</p></div></section>
       </div></div></div>`;
@@ -476,8 +509,13 @@ function capacityModal(ctx, tr) {
 
 function editModal(ctx, tr) {
   const { t, html: h, icon } = ctx;
-  const d = { pbx: tr.pbx || 'Generic', transport: tr.transport || 'tls', srtp: !!tr.srtp, failover: tr.failoverSec || 4, allDown: tr.allDown || 'flw_01JB5CLSD2' };
+  const fb0 = fallbackOf(ctx, tr);
+  const d = { pbx: tr.pbx || 'Generic', transport: tr.transport || 'tls', srtp: !!tr.srtp, failover: tr.failoverSec || 4,
+    fb: fb0.kind === 'message' ? `msg:${fb0.flow ? fb0.flow.id : 'default'}` : fb0.kind, fwd: tr.forwardTo || '', fwdErr: false };
   const flows = ctx.list('flows');
+  // "When all are down": the same three choices as the wizard (play a message · forward · hang up).
+  const fbOpts = [...(flows.length ? flows.map((f) => [`msg:${f.id}`, t('dest.fb.message', { name: ctx.loc(f.name) })]) : [['msg:default', `${t('dest.fb.message', { name: t('dest.fb.defaultName') })} · ${t('dest.fb.default')}`]]),
+    ['forward', t('editM.fb.forward')], ['hangup', t('dest.fb.hangup')]];
   const body = () => h`<div class="stack-3">
     <label class="field"><span class="label">${ctx.term(t('cfg.pbx'), 'pbx')}</span><select aria-label="${t('cfg.pbx')}" class="select" data-m="pbx">${PBX.map((p) => h`<option value="${p}" ${raw(d.pbx === p ? 'selected' : '')}>${p === 'Generic' ? t('cfg.generic') : p}</option>`)}</select></label>
     <div class="field"><span class="label">${t('cfg.transport')}</span><div class="seg" role="group" aria-label="${t('cfg.transport')}">${Object.keys(TRANSPORT).map((k) => h`<button type="button" data-action="tk.edit.transport" data-value="${k}" aria-pressed="${d.transport === k}">${TRANSPORT[k]}</button>`)}</div>
@@ -485,9 +523,17 @@ function editModal(ctx, tr) {
     <div class="row" style="flex-wrap:nowrap"><div class="grow"><strong id="tk-srtp-l">${ctx.term(t('editM.srtp'), 'srtp')}</strong><div class="hint-xs">${d.transport !== 'tls' ? t('editM.srtpNeedsTls') : d.srtp ? t('editM.srtpOn') : t('editM.srtpOff')}</div></div>
       <button type="button" class="toggle" role="switch" data-action="tk.edit.srtp" aria-checked="${d.transport === 'tls' && d.srtp}" aria-labelledby="tk-srtp-l" ${raw(d.transport !== 'tls' ? 'aria-disabled="true"' : '')}></button></div>
     <label class="field"><span class="label">${ctx.term(t('editM.failover'), 'failover')}</span><select aria-label="${t('editM.failover')}" class="select" data-m="failover">${[2, 4, 8].map((s) => h`<option value="${s}" ${raw(d.failover === s ? 'selected' : '')}>${t('common.seconds', { n: s })}</option>`)}</select></label>
-    <label class="field"><span class="label">${t('editM.allDown')}</span><select class="select" data-m="allDown">${flows.map((f) => h`<option value="${f.id}" ${raw(d.allDown === f.id ? 'selected' : '')}>${ctx.loc(f.name)}</option>`)}</select></label>
+    <label class="field"><span class="label">${t('editM.allDown')}</span><select class="select" data-m="allDown">${fbOpts.map(([v, l]) => h`<option value="${v}" ${raw(d.fb === v ? 'selected' : '')}>${l}</option>`)}</select></label>
+    ${d.fb === 'forward' ? h`<label class="field"><span class="label">${t('editM.fb.number')}</span><input class="input mono" data-m="fwd" value="${d.fwd}" placeholder="081-xxx-1234" inputmode="tel" translate="no" aria-invalid="${d.fwdErr ? 'true' : 'false'}" aria-describedby="tk-fwd-err">
+      ${d.fwdErr ? h`<span class="field-err" id="tk-fwd-err">${t('editM.fb.numberErr')}</span>` : h`<span class="hint-xs" id="tk-fwd-err">${t('editM.fb.numberHint')}</span>`}</label>` : ''}
     <p class="hint-xs">${icon('info', 'ico-xs')} ${t('editM.note')}</p></div>`;
-  const sync = (m) => { const q = (k) => m.el.querySelector(`[data-m="${k}"]`); if (q('pbx')) d.pbx = q('pbx').value; if (q('failover')) d.failover = Number(q('failover').value); if (q('allDown')) d.allDown = q('allDown').value; };
+  const sync = (m) => {
+    const q = (k) => m.el.querySelector(`[data-m="${k}"]`);
+    if (q('pbx')) d.pbx = q('pbx').value;
+    if (q('failover')) d.failover = Number(q('failover').value);
+    if (q('allDown')) d.fb = q('allDown').value;
+    if (q('fwd')) d.fwd = q('fwd').value.trim();
+  };
   const m = ctx.ui.modal({
     title: t('editM.title', { name: tr.name }), size: 'md', body: body(),
     actions: {
@@ -498,12 +544,27 @@ function editModal(ctx, tr) {
       { label: t('common.cancel') },
       { label: t('editM.save'), kind: 'navy', icon: 'check', onClick: (hd) => {
         sync(hd);
-        patchTrunk(ctx, tr.name, (x) => ({ ...x, pbx: d.pbx, transport: d.transport, srtp: d.transport === 'tls' && d.srtp, failoverSec: d.failover, allDown: d.allDown }));
+        if (d.fb === 'forward' && !/^[0-9+][0-9x\- ]{5,}$/i.test(d.fwd)) {
+          d.fwdErr = true; hd.setBody(body());
+          const f = hd.el.querySelector('[data-m="fwd"]'); if (f) f.focus();
+          return false;
+        }
+        const fbKind = d.fb.startsWith('msg:') ? 'message' : d.fb;
+        patchTrunk(ctx, tr.name, (x) => ({ ...x, pbx: d.pbx, transport: d.transport, srtp: d.transport === 'tls' && d.srtp, failoverSec: d.failover,
+          fallback: fbKind, allDown: fbKind === 'message' ? d.fb.slice(4) : null, forwardTo: fbKind === 'forward' ? d.fwd : (x.forwardTo || '') }));
         audit('trunk.updated', { name: tr.name }, tr.id);
         ctx.ui.toast(t('toast.T02'), { kind: 'success', sub: t('editM.saved', { name: tr.name }) });
         return true;
       } },
     ],
+  });
+  // Choosing "Forward to a number" shows the number field (and hides it again for the other choices).
+  m.el.addEventListener('change', (ev) => {
+    if (!ev.target.matches || !ev.target.matches('[data-m="allDown"]')) return;
+    sync(m);
+    d.fwdErr = false;
+    m.setBody(body());
+    const s = m.el.querySelector('[data-m="allDown"]'); if (s) s.focus();
   });
   return m;
 }
@@ -633,11 +694,12 @@ export function mount(root, ctx) {
     'td.disable': async () => {
       const tr = cur();
       if (!tr) return;
-      const fb = ctx.list('flows').find((f) => f.id === (tr.allDown || 'flw_01JB5CLSD2'));
-      const nums = ctx.list('numbers').filter((n) => n.routing && n.routing.type === 'trunk' && n.routing.ref === tr.name).map((n) => n.number);
+      const fbName = fallbackName(ctx, tr);
+      const nums = [...new Set([...ctx.list('numbers').filter((n) => n.routing && n.routing.type === 'trunk' && n.routing.ref === tr.name).map((n) => n.number), ...(tr.attached || [])])];
+      const numbers = nums.join(', ') || t('dis.noNumbers');
       const ok = await ctx.ui.confirm({
         title: t('dis.title', { name: tr.name }), body: t('dis.body'),
-        consequences: [t('dis.c1', { fallback: fb ? ctx.loc(fb.name) : '—', numbers: nums.join(', ') || t('dis.noNumbers') }), t('dis.c2'), t('dis.c3')],
+        consequences: [fbName == null ? t('dis.c1Hangup', { numbers }) : t('dis.c1', { fallback: fbName, numbers }), t('dis.c2'), t('dis.c3')],
         confirmLabel: t('dis.yes'), cancelLabel: t('dis.no'), danger: true, typed: tr.name,
       });
       if (!ok) return;

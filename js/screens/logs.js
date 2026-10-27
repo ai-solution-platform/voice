@@ -952,7 +952,7 @@ export function mount(root, ctx) {
   const call = want ? findCall(ctx, want) : null;
   if (call) openDrawer(ctx, call);
   else if (DR.handle) closeDrawer();
-  if (want && !call && ctx.state.missing !== ctx.params) { ctx.state.missing = ctx.params; ctx.later(() => ctx.ui.toast(t('dr.notFound', { id: want }), { kind: 'warn' }), 50); }
+  if (want && !call && ctx.state.missing !== ctx.params) { ctx.state.missing = ctx.params; ctx.later(() => ctx.ui.toast(t('dr.notFound', { id: want }), { kind: 'warn', reqId: true }), 50); }
   // Focus back on the row the drawer was opened from.
   if (!call && ctx.state.focusCall) {
     const fc = ctx.state.focusCall;

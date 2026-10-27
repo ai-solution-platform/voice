@@ -302,7 +302,8 @@ function spendCard(ctx) {
     <div class="card-body stack"><div class="row" style="align-items:baseline;gap:6px"><span class="ov-big tnum">${fmt.int(used)}</span><span class="hint">/ ${fmt.int(lim.daily)}</span></div>
     <span class="progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${t('spend.title')}"><i style="width:${pct}%"></i></span>
     <span class="hint-xs">${t('spend.line', { voice: fmt.int(today.creditsUsedVoice), other: fmt.int(today.creditsUsedOther) })}</span>
-    <span class="hint-xs">${t('spend.block')}</span></div></div>`;
+    <span class="hint-xs">${t('spend.block')}</span>
+    <p class="row-tight hint-xs ov-onebal" data-inv="ov.oneBalance">${icon('coin', 'ico-xs')}<span><strong>${t('spend.oneBalance')}</strong> · ${t('spend.oneBalanceLine')}</span></p></div></div>`;
 }
 
 function trunkCard(ctx) {

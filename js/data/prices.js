@@ -83,6 +83,52 @@ export function numbersMonthly(count) {
   return n * (n >= PRICES.numberBulkFrom ? PRICES.numberBulk : PRICES.number);
 }
 
+/** Bangkok calendar day (YYYY-MM-DD) of an ISO date, ISO date-time or epoch ms. */
+export function bkkDay(d) {
+  if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const ms = typeof d === 'number' ? d : Date.parse(d);
+  return new Date(ms + 7 * 3600000).toISOString().slice(0, 10);
+}
+
+/**
+ * A Thai number's first month: on the order day it is charged for the days left in that calendar month (the
+ * order day included), then the full monthly fee on the 1st of each month.
+ * numberFirstMonth(99, '2026-10-27') → { days: 5, cycleDays: 31, each: 15.97, from: '2026-10-27', to: '2026-10-31', next: '2026-11-01' }
+ */
+export function numberFirstMonth(monthly, start) {
+  const day = bkkDay(start);
+  const p = prorate(monthly, { start: day, cycleStartDay: 1 });
+  const [y, m] = day.split('-').map(Number);
+  return { days: p.days, cycleDays: p.cycleDays, each: p.value, from: day, to: new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10), next: new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10) };
+}
+
+/**
+ * What one number costs in a calendar month (period 'YYYY-MM'). The fee runs from `feeFrom` (null = not charged
+ * yet, e.g. ordered in Sandbox), else the order day, else the day it became active.
+ * → { credits, kind: 'full' | 'first' | 'none', …numberFirstMonth() for 'first' }
+ */
+export function numberFeeInMonth(n, period) {
+  if (!n || n.monthly == null) return { credits: 0, kind: 'none' };
+  const start = n.feeFrom !== undefined ? n.feeFrom : n.orderedAt || n.since;
+  if (!start) return { credits: 0, kind: 'none' };
+  const from = bkkDay(start);
+  if (from.slice(0, 7) > period) return { credits: 0, kind: 'none' };
+  if (from.slice(0, 7) < period) return { credits: n.monthly, kind: 'full' };
+  return { credits: numberFirstMonth(n.monthly, from).each, kind: 'first', ...numberFirstMonth(n.monthly, from) };
+}
+
+/** Number fees of a list of numbers in a month → { credits, count, full, first, price }. */
+export function numberFees(numbers, period) {
+  let credits = 0; let full = 0; let first = 0;
+  for (const n of numbers || []) {
+    const f = numberFeeInMonth(n, period);
+    if (f.kind === 'full') full++;
+    if (f.kind === 'first') first++;
+    credits += f.credits;
+  }
+  return { credits: Math.round(credits * 100) / 100, count: full + first, full, first, price: PRICES.number };
+}
+
 /** SIP trunk monthly fee for a number of concurrent calls. */
 export function trunkMonthly(concurrent) {
   const extra = Math.max(0, (Number(concurrent) || 0) - PRICES.trunkIncludedCalls);

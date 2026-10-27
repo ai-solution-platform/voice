@@ -4,12 +4,12 @@
 // with animated live checks. All endpoints come from js/data/edge.js, all prices from js/data/prices.js.
 
 import { raw, reducedMotion } from '../core/dom.js';
-import { setStep, newId, audit, isActive } from '../core/actions.js';
+import { setStep, newId, audit, isActive, addCall } from '../core/actions.js';
 import { tIn, getLang, LANGS } from '../core/i18n.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES, estimateMonthly, planBreakEven } from '../data/prices.js';
 import {
-  API_BASE, SIP_HOST, SIGNALLING_IPS, MEDIA_IPS, MEDIA_PORTS, PORTS, SANDBOX_CALLER_E164, DEFAULT_WEBHOOK,
+  API_BASE, SIP_HOST, SIGNALLING_IPS, MEDIA_IPS, MEDIA_PORTS, PORTS, SANDBOX_CALLER, SANDBOX_CALLER_E164, DEFAULT_WEBHOOK,
   DEMO_SIP_PASSWORD, DEMO_KEY_SANDBOX, DEMO_KEY_LIVE, maskKey,
 } from '../data/edge.js';
 
@@ -540,6 +540,7 @@ function loadDraft(ctx) {
     uris: (tr.uris && tr.uris.length ? tr.uris : freshWizard().uris).map((u) => ({ uri: u.uri, priority: u.priority, weight: u.weight, on: u.on ?? u.status !== 'off' })),
     concurrent: tr.concurrent || PRICES.trunkIncludedCalls, cps: tr.cps || PRICES.cpsDefault, failover: tr.failoverSec || 4,
     fallback: tr.fallback || 'message', attached: tr.attached || [], cid: tr.cid || 'attached',
+    fallbackFlow: tr.allDown && tr.allDown !== 'default' ? tr.allDown : freshWizard().fallbackFlow, forwardTo: tr.forwardTo || '',
   };
   ctx.state.wz = next;
   // Open on the step asked for, otherwise on the first step that is not finished.
@@ -753,9 +754,26 @@ function runInbound(ctx) {
   ctx.rerender();
   soon(ctx, (s) => {
     if (typeof stop === 'function') stop();
-    if (s.wz.firewall) { s.wz.checks.inbound = 'fail'; s.wz.live = ctx.t('wz.5.noAudio', { media: MEDIA_IPS, ports: MEDIA_PORTS }); } else { s.wz.checks.inbound = 'ok'; s.wz.at.inbound = nowMs(); liveMsg(ctx, s); }
+    if (s.wz.firewall) { s.wz.checks.inbound = 'fail'; s.wz.live = ctx.t('wz.5.noAudio', { media: MEDIA_IPS, ports: MEDIA_PORTS }); } else { s.wz.checks.inbound = 'ok'; s.wz.at.inbound = nowMs(); liveMsg(ctx, s); logInboundTest(ctx, s.wz); }
     redraw(ctx, onSip);
   }, 2000);
+}
+
+/** The inbound test is a real call in the record: it lands in Logs and in the trunk's calls and Recent calls (0 credits). */
+function logInboundTest(ctx, w) {
+  const started = nowMs() - 6000;
+  addCall({
+    ts: new Date(started).toISOString(), kind: 'inbound', direction: 'inbound', env: ctx.store.get('env'),
+    from: SANDBOX_CALLER, to: w.attached[0] || null, status: 'completed', sip: 200, q850: 16, sec: 4, billedMin: 0, credits: 0, trialMinutes: 0,
+    pddMs: 900, keys: null, recorded: false, transcribed: false, route: 'primary', sub: (ctx.store.get('subAccounts') || [])[0]?.id || null,
+    source: { type: 'trunk', ref: w.name, detail: { en: 'ext 101', th: 'เบอร์ภายใน 101', zh: '分机 101' } },
+    reason: {
+      en: `Inbound test from the SIP wizard · answered by extension 101 on ${w.name} · 0 credits`,
+      th: `ทดสอบสายเข้าจากตัวช่วยตั้งค่า SIP · เบอร์ภายใน 101 ของ ${w.name} รับสาย · 0 เครดิต`,
+      zh: `SIP 设置向导的呼入测试 · ${w.name} 的分机 101 已接听 · 0 点数`,
+    },
+    wizardTest: true,
+  });
 }
 
 function activate(ctx) {
@@ -777,9 +795,15 @@ function trunkRecord(ctx, status) {
     id: w.draftId || newId('trk'), name: w.name, pbx: PBX[w.pbx], sub: (ctx.store.get('subAccounts') || [])[0]?.id || null,
     auth: w.auth, ips: w.auth === 'credentials' ? [] : w.ips.map((r) => r.ip), ipLabels: w.ips.map((r) => r.label), transport: w.transport, srtp: w.transport === 'tls' && w.srtp,
     concurrent: w.concurrent, included: PRICES.trunkIncludedCalls, inUse: 0, monthly: tm.extraCost, cps: w.cps, status, availability: status === 'active' ? 100 : null,
-    last24h: { calls: 0, outbound: 0, inbound: 0, answerRatePct: null, pddSec: null, credits: 0 },
+    // No stored totals: the trunk page counts this trunk's calls (the inbound test from step 5 is the first one).
+    last24h: null,
     uris: w.uris.map((u) => ({ priority: u.priority, uri: u.uri, weight: u.weight, status: u.on ? (status === 'active' ? 'healthy' : 'unknown') : 'off', replyMs: status === 'active' && u.on ? 12 : null })),
-    failoverSec: w.failover, fallback: w.fallback, attached: w.attached, cid: w.cid, username: w.auth !== 'ip' ? `trk_${w.name.replace(/-/g, '_')}_DEMO` : null,
+    // "When every URI is down" exactly as chosen in step 4: the message (a flow, or the default "Closed" message
+    // when the account has no flows yet), the forward number, or hang up.
+    failoverSec: w.failover, fallback: w.fallback,
+    allDown: w.fallback === 'message' ? (ctx.list('flows').some((f) => f.id === w.fallbackFlow) ? w.fallbackFlow : 'default') : null,
+    forwardTo: w.fallback === 'forward' ? w.forwardTo.trim() : '',
+    attached: w.attached, cid: w.cid, username: w.auth !== 'ip' ? `trk_${w.name.replace(/-/g, '_')}_DEMO` : null,
     createdAt: new Date(nowMs()).toISOString(),
   };
 }

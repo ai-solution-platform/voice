@@ -4,7 +4,7 @@
 
 import { store } from './store.js';
 import { persist, KEYS } from './persist.js';
-import { PRICES, topUpBonus, makePlan, planUsage, creditsToThb, DEMO_CREDIT_RATE } from '../data/prices.js';
+import { PRICES, topUpBonus, makePlan, planUsage, creditsToThb, DEMO_CREDIT_RATE, numberFees, bkkDay } from '../data/prices.js';
 import { nowMs } from '../data/clock.js';
 import { DATASET_KEYS, activeDataset, firstRunDataset } from '../data/seed.js';
 
@@ -140,6 +140,8 @@ export function addSalesRequest(kind, data) {
 //                  carryMonths, carriedMinutes, startedAt, months }
 //   invoices: [postpaid monthly invoices: { id, period, status: 'open'|'issued'|'paid', issuedAt, dueAt, paidAt,
 //              lines: [{ kind, quantity, unit, rate, credits }], credits, net, vat, total }]
+//              line kinds: plan · planMinutes · overage · outbound · otp · inbound · recording · numbers ·
+//              extraConcurrent · channels · session (open month, see openLines) · usage (closed months)
 // } and store org.creditRate = { credits, thb, currency, effectiveFrom, label: { en, th, zh } }.
 // A plan is agreed with sales (ui.sales.requestPlan); only the Demo panel switches one on.
 
@@ -167,12 +169,24 @@ function drawPlanMinutes(rec) {
   const included = plan.committedMinutes + (plan.carriedMinutes || 0);
   const inside = Math.max(0, Math.min(plan.usedMinutes + rec.billedMin, included) - plan.usedMinutes);
   store.set('billing.profile.plan', { ...plan, ...planUsage(plan, plan.usedMinutes + rec.billedMin) });
+  planAlertCheck(plan.usedMinutes, plan.usedMinutes + rec.billedMin, plan);
   if (!isPostpaid()) return rec.credits;
   return Math.max(0, Math.round((rec.credits - inside * plan.rate) * 100) / 100);
 }
 
 const monthMinutes = () => (store.get('series') || []).filter((d) => d.date >= iso().slice(0, 8) + '01').reduce((a, d) => a + d.outMin, 0);
-const monthUsed = () => store.get('billing.usedMonth.total') || 0;
+
+// ---------- number fees (one rule everywhere: Numbers tile = Billing usage = statement = invoice) ----------
+/** The calendar month on the demo clock, Bangkok time: 'YYYY-MM'. */
+export const currentPeriod = () => bkkDay(nowMs()).slice(0, 7);
+/** Number fees this month from the numbers list (prices.js numberFeeInMonth) → { credits, count, full, first, price }. */
+export const numberFeesMonth = () => numberFees(store.get('numbers') || [], currentPeriod());
+/** The number fees already inside the month's sample usage (billing.usage "numbers"). */
+const seededNumberFees = () => ((store.get('billing.usage') || []).find((u) => u.item === 'numbers') || {}).credits || 0;
+/** Number fees charged in this demo session (orders placed since the page loaded), on top of the sample month. */
+export const sessionNumberFees = () => Math.max(0, Math.round((numberFeesMonth().credits - seededNumberFees()) * 100) / 100);
+
+const monthUsed = () => Math.round(((store.get('billing.usedMonth.total') || 0) + sessionNumberFees()) * 100) / 100;
 /** This month's usage other than outbound minutes (OTP, inbound, recording, numbers, trunks, other channels). */
 const monthOtherUsage = () => {
   const out = ((store.get('billing.usage') || []).find((u) => u.item === 'outbound') || {}).credits || 0;
@@ -187,28 +201,62 @@ function invoiceTotals(lines) {
   return { credits, net, vat, total: Math.round((net + vat) * 100) / 100 };
 }
 
-/** Lines of this month's open postpaid invoice, from the live usage (and the plan, when there is one). */
+const VOICE_RATE = () => ({ outbound: PRICES.outbound, otp: PRICES.otpPerAnsweredCall, inbound: PRICES.inbound, recording: PRICES.recording, extraConcurrent: PRICES.extraConcurrentCall });
+/**
+ * This month's usage as invoice lines at the listed prices: the sample usage (store billing.usage) with the number
+ * fees taken live from the numbers list, and SMS · LINE · Email as one line. Kinds: outbound · otp · inbound ·
+ * recording · numbers · extraConcurrent · channels. Each line: { kind, quantity, unit, rate, credits } (+ numbers: full, first).
+ */
+export function usageLines() {
+  const usage = store.get('billing.usage') || [];
+  const rate = VOICE_RATE();
+  const lines = usage.filter((u) => u.product === 'voice' && u.item !== 'numbers')
+    .map((u) => ({ kind: u.item, quantity: u.quantity, unit: u.unit, rate: rate[u.item] ?? null, credits: u.credits }));
+  const fees = numberFeesMonth();
+  if (fees.credits || usage.some((u) => u.item === 'numbers')) {
+    const at = lines.findIndex((l) => l.kind === 'extraConcurrent');
+    lines.splice(at < 0 ? lines.length : at, 0, { kind: 'numbers', quantity: fees.count, unit: 'number', rate: fees.price, credits: fees.credits, full: fees.full, first: fees.first });
+  }
+  const other = usage.filter((u) => u.product !== 'voice');
+  if (other.length) lines.push({ kind: 'channels', quantity: null, unit: null, rate: null, credits: Math.round(other.reduce((a, u) => a + u.credits, 0) * 100) / 100 });
+  return lines;
+}
+
+/**
+ * Lines of this month's open postpaid invoice (the "Upcoming invoice"): the usage lines, with outbound minutes
+ * replaced by the plan when there is one, and calls made in this demo session as the last line. The lines always
+ * add up to usedThisMonth ("Used this month"); VAT 7 % is added on top (invoiceTotals).
+ */
 function openLines(profile) {
   const plan = profile.plan;
-  if (!plan) return [{ kind: 'usage', quantity: null, unit: null, rate: null, credits: profile.usedThisMonth || 0 }];
-  // usedThisMonth on a plan = the commitment + overage + everything else (what the invoice will say).
-  const other = Math.max(0, Math.round(((profile.usedThisMonth || 0) - plan.monthlyCharge - plan.overageCredits) * 100) / 100);
-  return [
+  const base = usageLines();
+  const lines = plan ? [
     { kind: 'plan', quantity: plan.committedMinutes, unit: 'min', rate: plan.rate, credits: plan.monthlyCharge },
+    { kind: 'planMinutes', quantity: Math.min(plan.usedMinutes, plan.committedMinutes + (plan.carriedMinutes || 0)), unit: 'min', rate: null, credits: 0 },
     { kind: 'overage', quantity: plan.overageMinutes, unit: 'min', rate: plan.rate, credits: plan.overageCredits },
-    { kind: 'other', quantity: null, unit: null, rate: null, credits: other },
-  ];
+    ...base.filter((l) => l.kind !== 'outbound'),
+  ] : base;
+  const sum = lines.reduce((a, l) => a + (l.credits || 0), 0);
+  const rest = Math.round(((profile.usedThisMonth || 0) - sum) * 100) / 100;
+  if (Math.abs(rest) >= 0.01) lines.push({ kind: 'session', quantity: null, unit: null, rate: null, credits: rest });
+  return lines;
 }
 
 /** Sample postpaid invoices: last month issued and paid, this month open (accruing). */
 function sampleInvoices(profile) {
-  if (!isActive()) return [{ id: 'INV-PP-2610', period: '2026-10', status: 'open', issuedAt: '2026-11-01', dueAt: '2026-12-01', paidAt: null, lines: openLines(profile), ...invoiceTotals(openLines(profile)) }];
-  const sepUsed = ((store.get('billing.statements') || []).find((x) => x.period === '2026-09') || {}).used || 0;
-  const sepLines = [{ kind: 'usage', quantity: null, unit: null, rate: null, credits: sepUsed }];
-  return [
-    { id: 'INV-PP-2610', period: '2026-10', status: 'open', issuedAt: '2026-11-01', dueAt: '2026-12-01', paidAt: null, lines: openLines(profile), ...invoiceTotals(openLines(profile)) },
-    { id: 'INV-PP-2609', period: '2026-09', status: 'paid', issuedAt: '2026-10-01', dueAt: '2026-10-31', paidAt: '2026-10-15', lines: sepLines, ...invoiceTotals(sepLines) },
-  ];
+  // The open month on the demo clock: issued on the 1st of next month, due after the payment terms.
+  const period = currentPeriod();
+  const [y, m] = period.split('-').map(Number);
+  const day = (yy, mm, dd) => new Date(Date.UTC(yy, mm - 1, dd)).toISOString().slice(0, 10);
+  const issuedAt = day(y, m + 1, 1);
+  const due = (issued) => new Date(Date.parse(`${issued}T00:00:00Z`) + (profile.paymentTermsDays || 30) * 86400000).toISOString().slice(0, 10);
+  const no = (p) => `INV-PP-${p.slice(2, 4)}${p.slice(5, 7)}`;
+  const open = { id: no(period), period, status: 'open', issuedAt, dueAt: due(issuedAt), paidAt: null, lines: openLines(profile), ...invoiceTotals(openLines(profile)) };
+  if (!isActive()) return [open];
+  const prev = day(y, m - 1, 1).slice(0, 7);
+  const prevUsed = ((store.get('billing.statements') || []).find((x) => x.period === prev) || {}).used || 0;
+  const prevLines = [{ kind: 'usage', quantity: null, unit: null, rate: null, credits: prevUsed }];
+  return [open, { id: no(prev), period: prev, status: 'paid', issuedAt: day(y, m, 1), dueAt: due(day(y, m, 1)), paidAt: day(y, m, 15), lines: prevLines, ...invoiceTotals(prevLines) }];
 }
 
 /** Postpaid invoices, newest first, with the open one recalculated from the live usage. */
@@ -248,7 +296,7 @@ export function setBillingPreset(preset, { planId = 'plan50k' } = {}) {
     plan.prepaidAdj = {
       planCredits: plan.monthlyCharge, minutes: monthMinutes(), date: plan.startedAt,
       reprice: r2(monthMinutes() * (PRICES.outbound - plan.rate)), repriceToday: r2((today ? today.outMin : 0) * (PRICES.outbound - plan.rate)),
-      invoice: { id: 'INV-2610-0100', date: plan.startedAt || iso().slice(0, 10), credits: plan.monthlyCharge, plan: plan.id, net, vat: Math.round(net * 7) / 100, total: Math.round(net * 107) / 100 },
+      invoice: { id: 'INV-2610-0100', kind: 'plan', date: plan.startedAt || iso().slice(0, 10), period: (plan.startedAt || iso()).slice(0, 7), credits: plan.monthlyCharge, plan: plan.id, minutes: plan.committedMinutes, rate: plan.rate, net, vat: Math.round(net * 7) / 100, total: Math.round(net * 107) / 100 },
     };
     shiftPrepaidPlan(plan.prepaidAdj, 1);
   }
@@ -304,6 +352,31 @@ export function describeProfile(profile = billingProfile()) {
     rate: creditRate(),
     outboundRate: outboundRate(),
   };
+}
+
+// ---------- commitment plan alerts (80 % and 100 % of the minutes; switched on in Billing › Commitment plan) ----------
+export const PLAN_ALERT_LEVELS = [80, 100];
+const grp = (n) => Math.round(n).toLocaleString('en-US'); // en / th / zh all group digits with ','
+/** Which plan alerts are on: { 80: bool, 100: bool } (store billing.planAlerts). */
+export const planAlerts = () => ({ 80: false, 100: false, ...(store.get('billing.planAlerts') || {}) });
+/** Switch a plan alert on or off. Switching on a level the plan has already passed sends it at once. Returns { on, sent }. */
+export function setPlanAlert(level, on) {
+  store.set('billing.planAlerts', { ...planAlerts(), [level]: !!on });
+  audit('billing.plan-alert', { level, on: !!on });
+  const plan = activePlan();
+  if (!on || !plan) return { on: !!on, sent: false };
+  const at = Math.round((plan.committedMinutes * level) / 100);
+  if (plan.usedMinutes < at) return { on: true, sent: false };
+  notify('planThreshold', { vars: { pct: level, used: grp(plan.usedMinutes), min: grp(plan.committedMinutes) }, href: 'billing?section=plan' });
+  return { on: true, sent: true };
+}
+/** A call moved the plan from `before` to `after` minutes: send the alerts that are on and were just crossed. */
+function planAlertCheck(before, after, plan) {
+  const on = planAlerts();
+  for (const level of PLAN_ALERT_LEVELS) {
+    const at = Math.round((plan.committedMinutes * level) / 100);
+    if (on[level] && before < at && after >= at) notify('planThreshold', { vars: { pct: level, used: grp(after), min: grp(plan.committedMinutes) }, href: 'billing?section=plan' });
+  }
 }
 
 function nextCycleDate(day) {

@@ -52,7 +52,7 @@ const toDay = ([date, calls, answered, outCalls, outAnswered, otpSent, otpAnswer
 };
 
 /** Month to date (1–27 Oct, to 14:35). */
-export const MTD = { outMin: 44726, otpAnswered: 5078, inMin: 8078, recMin: 15151, numbers: 5, extraConcurrent: 10 };
+export const MTD = { outMin: 44726, otpAnswered: 5078, inMin: 8078, recMin: 15151, numbers: 6 /* charged this month: 3 full + 3 first months */, extraConcurrent: 10 };
 
 // 28 Sep – 13 Oct are synthesised from the Mon 26 Oct row with a weekday pattern, then corrected so that
 // 1–13 Oct + the 14 rows above = the month-to-date totals exactly (Billing reconciles with Reports).
@@ -123,12 +123,16 @@ export const MEMBERS = [
 ];
 
 // ---------- numbers ----------
+// Number fees (prices.js numberFeeInMonth): a number's first month is charged on its order day for the days left
+// in that month, then the full fee on the 1st. October: 3 × 99 (since September) + 2 × 89.42 (ordered 4 Oct,
+// 28 of 31 days; active 14 Oct after the documents were approved) + 19.16 (02-xxx-1004, ordered 26 Oct, 6 days)
+// = 495.00 — the "numbers" usage line below. The LOA number has no fee.
 export const NUMBERS = [
   { id: 'num_01JB3A1000', number: '02-xxx-1000', e164: '+662xxx1000', type: 'local', area: '02', sub: SUBS.hq, routing: { type: 'flow', ref: 'flw_01JB5MAIN1' }, callerIdFor: 'agents', status: 'active', since: '2026-09-14', monthly: PRICES.number },
   { id: 'num_01JB3A1001', number: '02-xxx-1001', e164: '+662xxx1001', type: 'local', area: '02', sub: SUBS.dv, routing: { type: 'webhook', ref: 'https://crm.example.com/ants/webhook' }, callerIdFor: 'campaigns', status: 'active', since: '2026-09-14', monthly: PRICES.number },
-  { id: 'num_01JB3A1002', number: '02-xxx-1002', e164: '+662xxx1002', type: 'local', area: '02', sub: SUBS.ck, routing: { type: 'flow', ref: 'flw_01JB5CKN02' }, callerIdFor: 'campaigns', status: 'active', since: '2026-10-14', monthly: PRICES.number },
+  { id: 'num_01JB3A1002', number: '02-xxx-1002', e164: '+662xxx1002', type: 'local', area: '02', sub: SUBS.ck, routing: { type: 'flow', ref: 'flw_01JB5CKN02' }, callerIdFor: 'campaigns', status: 'active', orderedAt: isoOn('2026-10-04', '09:40'), since: '2026-10-14', monthly: PRICES.number },
   { id: 'num_01JB3A1003', number: '02-xxx-1003', e164: '+662xxx1003', type: 'local', area: '02', sub: SUBS.app, routing: { type: 'message', ref: 'otp-only' }, callerIdFor: 'otp', status: 'active', since: '2026-09-14', monthly: PRICES.number },
-  { id: 'num_01JB3B0120', number: '053-xxx-120', e164: '+6653xxx120', type: 'regional', area: '053', sub: SUBS.hq, routing: { type: 'trunk', ref: 'cm-branch-pbx', fallback: 'flw_01JB5CLSD2' }, status: 'active', since: '2026-10-14', monthly: PRICES.number },
+  { id: 'num_01JB3B0120', number: '053-xxx-120', e164: '+6653xxx120', type: 'regional', area: '053', sub: SUBS.hq, routing: { type: 'trunk', ref: 'cm-branch-pbx', fallback: 'flw_01JB5CLSD2' }, status: 'active', orderedAt: isoOn('2026-10-04', '09:40'), since: '2026-10-14', monthly: PRICES.number },
   { id: 'num_01JB3A1004', number: '02-xxx-1004', e164: '+662xxx1004', type: 'local', area: '02', sub: SUBS.ck, routing: null, status: 'in-review', orderedAt: isoOn('2026-10-26', '10:15'), monthly: PRICES.number },
   { id: 'num_01JB3C7788', number: '02-xxx-7788', e164: '+662xxx7788', type: 'loa', area: '02', sub: SUBS.hq, routing: null, status: 'in-review', letterSentAt: '2026-10-20', monthly: null },
 ];

@@ -116,6 +116,8 @@ export default {
   'spend.edit': 'แก้ไขเพดาน',
   'spend.line': 'เสียง {voice} · ช่องทางอื่น {other}',
   'spend.block': 'เมื่อถึงเพดานรายวัน ระบบระงับสายใหม่และแจ้งเตือนคุณ',
+  'spend.oneBalance': 'ยอดเงินเดียวใช้ได้ทุกช่องทาง',
+  'spend.oneBalanceLine': "โทร OTP ลิงก์ทาง SMS และข้อความสำรองทาง SMS / LINE หลังโทรซ้ำครั้งสุดท้ายของแคมเปญ ใช้เครดิตเดียวกัน",
 
   'trunk.title': 'สถานะทรังก์ SIP',
   'trunk.empty': 'ยังไม่มีทรังก์ SIP',

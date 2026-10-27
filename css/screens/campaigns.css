@@ -197,3 +197,11 @@ html[lang^="zh"] .cp-say { line-height: 1.85; }
 .cp-tcap { flex-wrap: wrap; margin-top: 4px; }
 .cp-tcap-sel { width: auto; min-width: 150px; min-height: 32px; font-size: var(--fs-sm); }
 .cp-noceil { margin: 6px 0 8px; }
+
+/* cross-channel fallback rule (step 3) and its lines in Review and results */
+.cp-fb { border: 1px solid var(--border); border-radius: var(--r); padding: var(--s-3); gap: 6px; background: var(--card); }
+.cp-fb.is-on { border-color: var(--navy-50, var(--border-strong)); background: var(--sunken); }
+.cp-fb-head { align-items: flex-start; flex-wrap: nowrap; gap: var(--s-3); }
+.cp-fb-head .label { white-space: normal; }
+.cp-fb-ch { align-items: center; gap: 8px; flex-wrap: wrap; }
+.cp-fb-price { color: var(--slate); }

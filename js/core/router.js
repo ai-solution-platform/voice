@@ -11,6 +11,7 @@ import { t, scoped, getLang, loc } from './i18n.js';
 import { fmt } from './format.js';
 import { store } from './store.js';
 import { closeAll } from '../ui/overlay.js';
+import { reqId, reqIdLine } from '../ui/reqid.js';
 
 const screens = new Map();
 const order = [];
@@ -217,7 +218,7 @@ function renderInto(mod, params) {
   current.ctx = ctx;
   // Demo panel → "Simulate an error on this screen": every screen gets a working error state for free.
   if (store.get('demo.errorScreen') === mod.id) {
-    outlet.innerHTML = String(errorState(mod));
+    outlet.innerHTML = String(errorState(mod, params, 'HTTP 503'));
     const retry = outlet.querySelector('[data-action="screen-retry"]');
     if (retry) retry.addEventListener('click', (ev) => { ev.__handled = true; store.set('demo.errorScreen', null); rerender(); });
     return;
@@ -229,16 +230,19 @@ function renderInto(mod, params) {
     if (typeof c === 'function') ctx._cleanups.push(c);
   } catch (e) {
     console.error(e);
-    outlet.innerHTML = String(errorState(mod));
+    outlet.innerHTML = String(errorState(mod, params, 'HTTP 500'));
     const retry = outlet.querySelector('[data-action="screen-retry"]');
     if (retry) retry.addEventListener('click', (ev) => { ev.__handled = true; rerender(); });
   }
 }
 
-function errorState(mod) {
+// The request ID is the same for the same route + code (so a screenshot and a support ticket match) and has a Copy button.
+function errorState(mod, params, code = 'HTTP 503') {
   const title = mod.titleKey ? t(mod.titleKey) : '';
+  const route = params && params.id ? [params.id, ...(params.path || [])].join('/') : mod.id;
   return html`<div class="page"><div class="card errstate" role="alert"><div class="ph-art">${ui.icon('alert-circle')}</div>
     <h2>${t('common.errorTitle', { screen: title })}</h2><p class="hint">${t('common.errorBody')}</p>
+    ${reqIdLine(reqId(`${route}|${code}`), { hint: true, cls: 'rq-err' })}
     <div class="row" style="justify-content:center"><button class="btn btn-navy" type="button" data-action="screen-retry">${ui.icon('refresh')}${t('common.retry')}</button>
     <a class="btn" href="#/help/status">${ui.icon('activity')}${t('common.checkStatus')}</a></div></div></div>`;
 }

@@ -132,8 +132,46 @@ html[data-motion="reduce"] .ky-test li { animation: none; }
 }
 
 /* failed list reached from the tile */
-.ky-failed:focus { outline: none; }
-.ky-failed.ky-flash { animation: kyflash 1.2s var(--ease-out); }
+.ky-failed:focus, .ky-body > .card:focus, .ky-body > .ky-empty:focus { outline: none; }
+.ky-flash { animation: kyflash 1.2s var(--ease-out); }
 @keyframes kyflash { 0%, 40% { box-shadow: 0 0 0 3px rgba(242, 99, 34, .35); } 100% { box-shadow: var(--shadow-1); } }
-@media (prefers-reduced-motion: reduce) { .ky-failed.ky-flash { animation: none; } }
-html[data-motion="reduce"] .ky-failed.ky-flash { animation: none; }
+@media (prefers-reduced-motion: reduce) { .ky-flash { animation: none; } }
+html[data-motion="reduce"] .ky-flash { animation: none; }
+
+/* requests log (Requests tab) */
+.ky-rq-seg .ky-rq-n { font-size: var(--fs-xs); color: var(--slate); font-weight: 500; }
+.ky-rqtbl td { vertical-align: middle; }
+.ky-rqtbl tbody tr { cursor: pointer; }
+.ky-rqtbl tbody tr:hover td { background: var(--hover); }
+.ky-rq-bad td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
+.ky-rq-link { color: inherit; text-decoration: none; display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 360px; }
+.ky-rq-link:hover .mono, .ky-rq-link:focus-visible .mono { text-decoration: underline; }
+.ky-rq-link .mono { font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ky-rq-m { font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--navy); font-family: var(--font-mono); flex: none; }
+.ky-rq-id .rq-line { justify-content: flex-start; flex-wrap: nowrap; }
+.ky-rq-id .rq-k { display: none; }
+.rq-left { justify-content: flex-start; }
+.ky-rq-d .rq-line { font-size: var(--fs-sm); }
+.ky-rq-kv { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 2px 0; }
+.ky-rq-kv .kv .v { text-align: right; word-break: break-all; }
+@media (max-width: 1199px) {
+  .ky-c-rqkey { display: none; }
+  .ky-rq-link { max-width: 260px; }
+}
+/* phone: each request becomes a small card (time · status · latency on one line, request and ID below) */
+@media (max-width: 767px) {
+  .ky-rq-seg { width: 100%; }
+  .ky-rq-seg button { flex: 1 1 auto; padding: 5px 8px; }
+  .ky-rqtbl { min-width: 0; }
+  .ky-rqtbl thead { display: none; }
+  .ky-rqtbl, .ky-rqtbl tbody { display: block; width: 100%; }
+  .ky-rqtbl tr { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 4px 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .ky-rqtbl td { display: block; padding: 0; border: 0; text-align: left; }
+  .ky-rqtbl td.ky-rq-ms { text-align: right; }
+  .ky-rqtbl td.ky-rq-req, .ky-rqtbl td.ky-rq-id { grid-column: 1 / -1; }
+  .ky-rqtbl td.ky-c-rqkey { display: none; }
+  .ky-rq-link { max-width: 100%; }
+  .ky-rq-bad td:first-child { box-shadow: none; }
+  .ky-rq-bad { box-shadow: inset 3px 0 0 var(--amber); }
+}
+.rq-left .rq-hint { text-align: left; }

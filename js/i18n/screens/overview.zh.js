@@ -116,6 +116,8 @@ export default {
   'spend.edit': '修改上限',
   'spend.line': '语音 {voice} · 其他渠道 {other}',
   'spend.block': '达到每日上限后将暂停新呼叫，并向您发送告警。',
+  'spend.oneBalance': '所有渠道共用一个余额',
+  'spend.oneBalanceLine': "通话、OTP、短信链接以及活动最后一次重拨后的短信 / LINE 备用消息使用同一笔点数。",
 
   'trunk.title': 'SIP 中继状态',
   'trunk.empty': '尚无 SIP 中继',

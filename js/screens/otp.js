@@ -13,6 +13,7 @@ import { nowMs } from '../data/clock.js';
 import { PRICES, callCost } from '../data/prices.js';
 import { API_BASE, SANDBOX_CALLER } from '../data/edge.js';
 import { BRAND, CLINIC, SUBS } from '../data/active.js';
+import { reqId as makeReqId, reqIdLine } from '../ui/reqid.js';
 
 export const id = 'otp';
 export const nav = { group: 'build', icon: 'shield-check', labelKey: 'nav.otp' };
@@ -324,7 +325,7 @@ function runHTML(ctx, run) {
   if (!run) return h`<p class="hint ot-idle">${t('con.idle')}</p>`;
   const ICON = { ok: 'check-circle', err: 'x-circle', warn: 'alert', run: null };
   return h`${run.response ? h`<div class="ot-resp ${run.response.code < 300 ? 'is-ok' : 'is-err'}"><span class="mono strong" translate="no">${run.response.code} ${run.response.code === 201 ? 'Created' : run.response.code === 429 ? 'Too Many Requests' : run.response.code === 400 ? 'Bad Request' : run.response.code === 403 ? 'Forbidden' : ''}</span>
-      <code class="mono" translate="no">${JSON.stringify(run.response.body)}</code></div>` : ''}
+      <code class="mono" translate="no">${JSON.stringify(run.response.body)}</code>${run.response.code >= 400 ? reqIdLine(makeReqId(`otp|${run.response.code}|${(run.response.body && run.response.body.error) || ''}|${run.to || ''}`)) : ''}</div>` : ''}
     <ol class="ot-tl" aria-label="${t('con.tlAria')}">${run.steps.map((s) => h`<li class="is-${s.state}">${s.state === 'run' ? raw('<span class="spin" aria-hidden="true"></span>') : icon(ICON[s.state] || 'dot', 'ico-sm')}
       <span class="grow">${t(`st.${s.key}`, { ...s.vars, tpl: run.tpl, to: run.to })}</span><span class="mono hint-xs">${ctx.fmt.time(s.at)}</span></li>`)}</ol>
     ${run.note ? h`<p class="hint-xs" role="status">${run.note}</p>` : ''}

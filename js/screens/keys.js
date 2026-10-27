@@ -1,14 +1,18 @@
-// API keys & Webhooks — #/keys?tab=keys|webhooks|events   (?section=webhooks is accepted too)
-// Keys, webhook endpoints, failed deliveries, an event inspector and "Verify a signature".
+// API keys & Webhooks — #/keys?tab=keys|requests|webhooks|events   (?section=webhooks is accepted too)
+// Keys, an API request log (?tab=requests&status=all|2xx|4xx|5xx&req=req_…), webhook endpoints, failed deliveries,
+// an event inspector and "Verify a signature".
 // Secrets are visibly fake and shown once: ak_live_DEMO_…_not_a_real_key, whsec_DEMO_…_not_a_real_secret.
 // Rotate / Revoke / Rotate secret ask you to type the name; a revoked key has no actions except Hide;
 // removing a row before saving offers Undo.
 
 import { raw, reducedMotion } from '../core/dom.js';
+import { getLang, tIn, LANGS } from '../core/i18n.js';
 import { newId, audit, setStep } from '../core/actions.js';
-import { nowMs } from '../data/clock.js';
-import { DEMO_KEY_SANDBOX, DEMO_KEY_LIVE, maskKey, API_BASE } from '../data/edge.js';
+import { nowMs, DEMO_NOW, at as atTime } from '../data/clock.js';
+import { DEMO_KEY_SANDBOX, DEMO_KEY_LIVE, maskKey, API_BASE, SANDBOX_CALLER_E164, DEFAULT_WEBHOOK } from '../data/edge.js';
 import { PRICES } from '../data/prices.js';
+import { ERRORS } from '../data/reference.js';
+import { reqId, reqIdLine } from '../ui/reqid.js';
 
 export const id = 'keys';
 export const nav = { group: 'account', icon: 'key', labelKey: 'nav.keys' };
@@ -21,17 +25,18 @@ const IP_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}(\/(3
 const URL_RE = /^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(:\d{2,5})?(\/[\w./-]*)?$/i;
 const SCOPES = ['calls:write', 'broadcasts:write', 'numbers:write', 'otp:write', 'read'];
 const EVENTS = ['call.completed', 'call.*', 'otp.*', 'broadcast.*', 'recording.ready', 'number.*'];
-const TABS = ['keys', 'webhooks', 'events'];
+const TABS = ['keys', 'requests', 'webhooks', 'events'];
 const RETRY = [1, 5, 30, 120, 600];
 const noop = () => {};
 
-export const initialState = () => ({ env: 'all', showRevoked: false, hidden: [], shown: null, creating: false, tests: {}, resending: {}, sent: [], evQ: '', evStatus: 'all', verify: { wh: null, ts: null, payload: null, sig: '', result: null, busy: false }, seq: 3 });
+export const initialState = () => ({ env: 'all', showRevoked: false, hidden: [], shown: null, creating: false, tests: {}, resending: {}, sent: [], evQ: '', evStatus: 'all', rqQ: '', verify: { wh: null, ts: null, payload: null, sig: '', result: null, busy: false }, seq: 3 });
 
 // the tab bar already says where you are; a crumb would only repeat it
 export function crumb() { return ''; }
 
 export const commands = [
   { id: 'wh', labelKey: 'cmd.webhooks', icon: 'link', keywords: ['webhooks events deliveries signature'], run: ({ go }) => go('keys?tab=webhooks') },
+  { id: 'rq', labelKey: 'cmd.requests', icon: 'activity', keywords: ['api requests log request id 4xx 5xx errors debugger'], run: ({ go }) => go('keys?tab=requests') },
 ];
 
 // ---------- helpers ----------
@@ -136,9 +141,11 @@ function tiles(ctx) {
   const kt = ctx.store.get('keyTiles') || { requests24h: 0, error4xxPct: 0, webhookDeliveryPct: null, webhookEvents24h: 0, retried24h: 0 };
   const active = ctx.list('apiKeys').filter((k) => k.status === 'active').length;
   const failed = ctx.list('failedEvents').length;
+  // Same totals as the Requests tab; opens it already filtered to 4xx (when there are any).
+  const rt = reqTotals(ctx);
   return h`<div class="grid g-4 ky-tiles">
     <div class="card tile"><span class="t">${t('tile.active')}</span><span class="v">${fmt.int(active)}</span><span class="h">${t('tile.activeLine', { live: fmt.int(ctx.list('apiKeys').filter((k) => k.status === 'active' && k.env === 'live').length), sandbox: fmt.int(ctx.list('apiKeys').filter((k) => k.status === 'active' && k.env === 'sandbox').length) })}</span></div>
-    <div class="card tile"><span class="t">${t('tile.requests')}</span><span class="v">${fmt.int(kt.requests24h)}</span><span class="h">${t('tile.requestsLine', { pct: fmt.pct(kt.error4xxPct) })}</span></div>
+    <a class="card tile tile-link" href="#/keys?tab=requests${rt.n4 ? '&status=4xx' : ''}" data-action="ky.tile.requests"><span class="t">${t('tile.requests')}</span><span class="v">${fmt.int(rt.total)}</span><span class="h">${t('tile.requestsLine', { pct: fmt.pct(rt.total ? (rt.n4 / rt.total) * 100 : kt.error4xxPct) })}</span></a>
     <a class="card tile tile-link" href="#/keys?tab=events" data-action="ky.tile.delivery"><span class="t">${ctx.term(t('tile.delivery'), 'webhook')}</span><span class="v">${kt.webhookDeliveryPct != null ? fmt.pct(kt.webhookDeliveryPct) : '—'}</span><span class="h">${t('tile.deliveryLine', { n: fmt.int(kt.webhookEvents24h), r: fmt.int(kt.retried24h) })}</span></a>
     <a class="card tile tile-link ${failed ? 'ky-tile-warn' : ''}" href="#/keys?tab=webhooks&focus=failed" data-action="ky.tile.failed"><span class="t">${t('tile.failed')}</span><span class="v">${fmt.int(failed)}</span><span class="h">${failed ? t('tile.failedLine') : t('tile.failedNone')}</span></a>
   </div>`;
@@ -209,7 +216,7 @@ function whCard(ctx, wh) {
       ${st === 'failing' ? h`<p class="hint-xs err-text">${t('wh.failingHint', { n: wh.failuresInRow, schedule: RETRY.map((x) => `${x} s`).join(' · ') })}</p>` : ''}
       ${st === 'off' && wh.failuresInRow >= 100 ? h`<p class="hint-xs">${t('wh.autoOffHint')}</p>` : ''}
       ${test ? h`<ol class="ky-test" aria-live="polite">${steps.map((x) => h`<li class="${x.on ? 'is-on' : ''}">${x.on ? icon('check', 'ico-xs') : raw('<span class="spin" aria-hidden="true"></span>')}<span>${x.label}</span></li>`)}
-        ${test.step >= 3 ? h`<li class="is-res ${test.ok ? 'is-ok' : 'is-bad'}">${icon(test.ok ? 'check-circle' : 'alert-circle', 'ico-sm')}<span><strong>${test.code ? test.code : t('wt.noResp')}</strong> ${test.code ? t(`wt.code.${test.code}`) : ''} · ${t('wt.ms', { ms: fmt.int(test.ms) })} <span class="hint-xs">${t('wt.simulated')}</span>${test.ok ? '' : h`<br><span class="hint-xs">${t('wt.retryNote', { schedule: RETRY.map((x) => `${x} s`).join(' · ') })}</span>`}</span>
+        ${test.step >= 3 ? h`<li class="is-res ${test.ok ? 'is-ok' : 'is-bad'}">${icon(test.ok ? 'check-circle' : 'alert-circle', 'ico-sm')}<span><strong>${test.code ? test.code : t('wt.noResp')}</strong> ${test.code ? t(`wt.code.${test.code}`) : ''} · ${t('wt.ms', { ms: fmt.int(test.ms) })} <span class="hint-xs">${t('wt.simulated')}</span>${test.ok ? '' : h`<br><span class="hint-xs">${t('wt.retryNote', { schedule: RETRY.map((x) => `${x} s`).join(' · ') })}</span>${test.ev ? h`<br>${reqIdLine(reqId(`keys/webhooks|${wh.id}|${test.code || 'timeout'}`), { cls: 'rq-left' })}` : ''}`}</span>
           <button type="button" class="linkbtn hint-xs" data-action="wh.test.view" data-value="${wh.id}">${t('wt.view')}</button></li>` : ''}</ol>` : ''}
       <div class="row ky-wh-a"><button type="button" class="btn btn-sm btn-navy" data-action="wh.test" data-value="${wh.id}" ${raw(test && test.step < 3 ? 'aria-busy="true"' : '')}>${test && test.step < 3 ? raw('<span class="spin" aria-hidden="true"></span>') : icon('send', 'ico-sm')}${t('wh.test')}</button>
         <button type="button" class="btn btn-sm" data-action="wh.edit" data-value="${wh.id}">${icon('edit', 'ico-sm')}${t('wh.edit')}</button>
@@ -286,10 +293,235 @@ function eventsTab(ctx) {
       : h`<div class="card"><div class="empty empty-center" role="status"><strong>${t('ev.noMatch')}</strong><button type="button" class="btn btn-sm" data-action="wh.ev.clear">${t('clear')}</button></div></div>`}`;
 }
 
+// ---------- API request log (Keys › Requests) — benchmark: Stripe Workbench › Logs, Twilio Debugger ----------
+// Sample data that reconciles with the tile: keyTiles.requests24h requests in 24 h, error4xxPct % of them 4xx and
+// REQ_5XX 5xx. The demo keeps one page per filter (the latest rows); requests sent in this session (Connect › API
+// test call, the OTP console) go on top and are counted in the totals. Bodies follow the Connect and OTP samples;
+// numbers are masked, codes redacted, hosts are .example.
+const PAGE = 40;
+const REQ_5XX = 2;
+const OLD_KEY_401 = 24; // the revoked key old-pos still polls once an hour → 24 of the day's 4xx
+const RQ_STATUS = ['all', '2xx', '4xx', '5xx'];
+const HTTP_TEXT = { 200: 'OK', 201: 'Created', 401: 'Unauthorized', 403: 'Forbidden', 409: 'Conflict', 422: 'Unprocessable Entity', 429: 'Too Many Requests', 503: 'Service Unavailable' };
+const KEY_IP = { 'app-backend': ['203.0.113.10', '203.0.113.11'], 'delivery-system': ['198.51.100.23'], 'old-pos': ['198.51.100.77'] };
+const CRM_HOOK = 'https://crm.example.com/ants/webhook';
+const C1 = 'bc_01JBK7C1Q2';
+const SAY_ETA = 'สวัสดีค่ะ พัสดุคำสั่งซื้อ 5120 จะถึงวันนี้ช่วง 13:00–15:00 น.';
+const bucketOf = (status) => `${String(status)[0]}xx`;
+const rqStatusOf = (params) => { const v = (params.query || {}).status; return RQ_STATUS.includes(v) ? v : 'all'; };
+const errEn = (code) => { const e = ERRORS.find((x) => x.code === code); return e ? e.text.en.split(' · ')[0] : ''; };
+const callBody = (to, say = SAY_ETA, extra = {}) => ({ from: '+662xxx1001', to, say, language: 'th-TH', webhook_url: CRM_HOOK, ...extra });
+// The day's latest 4xx: [time, method, path, status, code, key, body]
+const SAMPLE_4XX = [
+  ['14:33:12', 'POST', '/voice/otp', 422, 'VOICE_4220', 'app-backend', { to: '+6681xxx12', template: 'otp-login', lang: 'th-TH' }],
+  ['14:21:40', 'POST', '/voice/calls', 409, 'VOICE_4213', 'delivery-system', callBody('+6689xxx3021')],
+  ['14:00:00', 'GET', '/voice/calls?limit=50', 401, 'HTTP 401', 'old-pos', null],
+  ['13:47:05', 'POST', '/voice/calls', 403, 'VOICE_4204', 'delivery-system', callBody('+6698xxx3345')],
+  ['13:00:00', 'GET', '/voice/calls?limit=50', 401, 'HTTP 401', 'old-pos', null],
+  ['12:18:33', 'POST', '/voice/otp', 429, 'VOICE_4207', 'app-backend', { to: '+6696xxx9981', template: 'otp-payment-confirm', lang: 'th-TH' }],
+  ['12:00:00', 'GET', '/voice/calls?limit=50', 401, 'HTTP 401', 'old-pos', null],
+  ['11:26:10', 'POST', '/voice/calls', 422, 'VOICE_4220', 'delivery-system', callBody('+6685xxx')],
+  ['11:00:00', 'GET', '/voice/calls?limit=50', 401, 'HTTP 401', 'old-pos', null],
+  ['10:42:51', 'POST', '/voice/calls', 403, 'VOICE_4202', 'delivery-system', callBody('+65xxxx2210')],
+  ['10:00:00', 'GET', '/voice/calls?limit=50', 401, 'HTTP 401', 'old-pos', null],
+  ['09:15:27', 'POST', '/voice/calls', 403, 'VOICE_4204', 'delivery-system', callBody('+6683xxx7712')],
+];
+const SAMPLE_5XX = [
+  ['03:12:44', 'POST', '/voice/otp', 503, 'app-backend', { to: '+6662xxx4410', template: 'otp-login', lang: 'th-TH' }],
+  ['03:12:41', 'POST', '/voice/otp', 503, 'app-backend', { to: '+6662xxx4410', template: 'otp-login', lang: 'th-TH' }],
+];
+
+function keyRef(ctx, name) {
+  const k = ctx.list('apiKeys').find((x) => x.name === name);
+  return k ? { name: k.name, prefix: k.prefix, last4: k.last4, status: k.status, env: k.env } : { name, prefix: 'ak_live_', last4: '0002', status: 'active', env: 'live' };
+}
+function sessionKey(ctx, env, sub) {
+  const ks = ctx.list('apiKeys').filter((k) => k.status === 'active' && k.env === (env === 'sandbox' ? 'sandbox' : 'live'));
+  const k = ks.find((x) => x.sub === sub) || ks[0];
+  if (k) return { name: k.name, prefix: k.prefix, last4: k.last4, status: k.status, env: k.env };
+  return env === 'sandbox' ? { name: 'sandbox', prefix: 'ak_test_', last4: '0001', status: 'active', env: 'sandbox' } : { name: 'live', prefix: 'ak_live_', last4: '0002', status: 'active', env: 'live' };
+}
+const mkReq = (r) => ({ ...r, id: reqId(`${r.method} ${r.path}|${r.at}|${r.key.name}`) });
+const callSummary = (c) => ({ id: c.id, direction: c.direction, from: e164(c.from), to: e164(c.to), status: c.status, talk_seconds: c.sec || 0 });
+
+/** Every request the log knows: the seeded day (busy account) plus this session's requests. Newest first. */
+function requestsList(ctx) {
+  const { fmt } = ctx;
+  const out = [];
+  const calls = ctx.list('calls');
+  const busy = !!ctx.store.get('keyTiles') && !firstRun(ctx);
+  // this session: Connect › API test calls and OTP-console sends (calls placed after the demo clock started)
+  calls.filter((c) => new Date(c.ts).getTime() > DEMO_NOW && c.source && ((c.source.type === 'test-call' && c.source.ref === 'connect') || c.source.type === 'otp' || c.source.type === 'notification')).forEach((c) => {
+    const at = new Date(c.ts).getTime() - 900;
+    const key = sessionKey(ctx, c.env, c.sub);
+    if (c.source.type === 'otp') {
+      out.push(mkReq({ at, method: 'POST', path: '/voice/otp', status: 201, ms: 164, key, ip: '203.0.113.10', sub: c.sub, callId: c.id, session: true,
+        body: { to: e164(c.to), template: c.source.ref, lang: LANGS[getLang()].tts }, res: { id: `otp_${c.id.slice(5)}`, status: 'queued', expires_at: fmt.iso(at + 300000) } }));
+    } else {
+      const lang = getLang();
+      const body = c.source.type === 'test-call'
+        ? { from: SANDBOX_CALLER_E164, to: '+668XXXX0101', say: tIn(lang, 'dialer.tpl.test.text'), language: LANGS[lang].tts, webhook_url: DEFAULT_WEBHOOK }
+        : { to: e164(c.to), template: c.source.ref, lang: LANGS[lang].tts };
+      out.push(mkReq({ at, method: 'POST', path: '/voice/calls', status: 201, ms: 188, key, ip: '203.0.113.10', sub: c.sub, callId: c.id, session: true, body, res: { id: c.id, status: 'queued' } }));
+    }
+  });
+  if (!busy) return out.sort((a, b) => b.at - a.at);
+  const seeded = calls.filter((c) => new Date(c.ts).getTime() <= DEMO_NOW);
+  const app = keyRef(ctx, 'app-backend');
+  const dv = keyRef(ctx, 'delivery-system');
+  const old = keyRef(ctx, 'old-pos');
+  // API-placed calls in the call log → the request that created each of them
+  seeded.forEach((c, i) => {
+    const t0 = new Date(c.ts).getTime();
+    const type = c.source && c.source.type;
+    if (type === 'otp') {
+      const otpId = `otp_${c.id.slice(5)}`;
+      out.push(mkReq({ at: t0 - 1400, method: 'POST', path: '/voice/otp', status: 201, ms: 150 + ((i * 29) % 70), key: app, ip: KEY_IP['app-backend'][i % 2], sub: c.sub, callId: c.id,
+        body: { to: e164(c.to), template: c.source.ref, lang: 'th-TH' }, res: { id: otpId, status: 'queued', expires_at: fmt.iso(t0 - 1400 + 300000) } }));
+      if (c.status === 'completed') out.push(mkReq({ at: t0 + (c.sec || 20) * 1000 + 6000, method: 'POST', path: `/voice/otp/${otpId}/verify`, status: 200, ms: 40 + ((i * 13) % 30), key: app, ip: KEY_IP['app-backend'][(i + 1) % 2], sub: c.sub, redacted: true,
+        body: { code: '[redacted]' }, res: { id: otpId, status: 'approved', call_id: c.id } }));
+    } else if (type === 'notification') {
+      out.push(mkReq({ at: t0 - 1100, method: 'POST', path: '/voice/calls', status: 201, ms: 176, key: dv, ip: KEY_IP['delivery-system'][0], sub: c.sub, callId: c.id, body: callBody(e164(c.to)), res: { id: c.id, status: 'queued' } }));
+      if (c.status === 'canceled') out.push(mkReq({ at: t0 + 2400, method: 'POST', path: `/voice/calls/${c.id}/cancel`, status: 200, ms: 61, key: dv, ip: KEY_IP['delivery-system'][0], sub: c.sub, callId: c.id, body: null, res: { id: c.id, status: 'canceled' } }));
+    } else if (type === 'click-to-call') {
+      out.push(mkReq({ at: t0 - 1300, method: 'POST', path: '/voice/calls', status: 201, ms: 191, key: dv, ip: KEY_IP['delivery-system'][0], sub: c.sub, callId: c.id,
+        body: { from: e164(c.from), to: '+6681xxx2040', connect: e164(c.to), webhook_url: CRM_HOOK }, res: { id: c.id, status: 'queued' } }));
+    }
+  });
+  // delivery-system polls the call list every 15 s and the running campaign every minute (last used 14:33)
+  const camp = ctx.list('campaigns').find((x) => x.id === C1);
+  for (let s = atTime('14:20:00'), i = 0; s <= atTime('14:33:45'); s += 15000, i += 1) {
+    const recent = seeded.filter((c) => new Date(c.ts).getTime() <= s).slice(0, 2).map(callSummary);
+    out.push(mkReq({ at: s, method: 'GET', path: '/voice/calls?limit=100', status: 200, ms: 38 + ((i * 17) % 45), key: dv, ip: KEY_IP['delivery-system'][0], sub: dv.sub, body: null, res: { object: 'list', data: recent, has_more: true } }));
+  }
+  if (camp) {
+    for (let s = atTime('14:20:45'), i = 0; s <= atTime('14:33:00'); s += 60000, i += 1) {
+      out.push(mkReq({ at: s, method: 'GET', path: `/voice/broadcasts/${C1}`, status: 200, ms: 44 + ((i * 11) % 30), key: dv, ip: KEY_IP['delivery-system'][0], body: null,
+        res: { id: C1, status: camp.status, progress_pct: camp.progressPct, dialled: camp.progress ? camp.progress.dialled : undefined, answered: camp.progress ? camp.progress.answered : undefined } }));
+    }
+  }
+  SAMPLE_4XX.forEach(([hms, method, path, status, code, keyName, body], i) => {
+    const key = keyName === 'old-pos' ? old : keyName === 'app-backend' ? app : dv;
+    const err = code === 'HTTP 401' ? { error: 'unauthorized', detail: 'API key revoked' } : { error: code, detail: errEn(code) };
+    const r = mkReq({ at: atTime(hms) + (i % 3) * 137, method, path, status, ms: 22 + ((i * 7) % 30), key, ip: KEY_IP[keyName][0], code, body, err });
+    r.res = { ...err, request_id: r.id };
+    out.push(r);
+  });
+  SAMPLE_5XX.forEach(([hms, method, path, status, keyName, body], i) => {
+    const r = mkReq({ at: atTime(hms) + i * 91, method, path, status, ms: 31 - i * 2, key: app, ip: KEY_IP[keyName][i % 2], body, err: { error: 'service_unavailable', detail: 'Temporarily unavailable. Nothing was created; safe to retry.' } });
+    r.res = { ...r.err, request_id: r.id };
+    out.push(r);
+  });
+  return out.filter((r) => r.at <= DEMO_NOW || r.session).sort((a, b) => b.at - a.at);
+}
+
+/** Totals for the tile and the tab: the seeded day plus this session's requests. */
+function reqTotals(ctx, list = null) {
+  const kt = ctx.store.get('keyTiles');
+  const busy = !!kt && !firstRun(ctx);
+  const session = (list || requestsList(ctx)).filter((r) => r.session);
+  const s4 = session.filter((r) => bucketOf(r.status) === '4xx').length;
+  const s5 = session.filter((r) => bucketOf(r.status) === '5xx').length;
+  const base = busy ? kt.requests24h : 0;
+  const n4 = (busy ? Math.round((kt.requests24h * kt.error4xxPct) / 100) : 0) + s4;
+  const n5 = (busy ? REQ_5XX : 0) + s5;
+  const total = base + session.length;
+  return { total, n2: total - n4 - n5, n4, n5, all: total };
+}
+
+function requestsTab(ctx) {
+  const { t, html: h, icon, fmt } = ctx;
+  const all = requestsList(ctx);
+  const tot = reqTotals(ctx, all);
+  if (!all.length) {
+    return h`<div class="card ky-empty"><div class="empty"><span class="art">${icon('activity')}</span><h2>${t('rq.emptyTitle')}</h2><p class="hint">${t('rq.emptyBody')}</p>
+      <div class="row"><a class="btn btn-primary" href="#/connect/api" data-action="rq.empty.connect">${icon('send')}${t('rq.emptyCta')}</a></div></div></div>`;
+  }
+  const st = rqStatusOf(ctx.params);
+  const q = ctx.state.rqQ.trim().toLowerCase();
+  const inBucket = all.filter((r) => st === 'all' || bucketOf(r.status) === st);
+  const rows = inBucket.filter((r) => !q || r.id.toLowerCase().includes(q) || r.path.toLowerCase().includes(q) || String(r.status) === q || (r.code || '').toLowerCase().includes(q) || r.key.name.includes(q)).slice(0, PAGE);
+  const count = st === 'all' ? tot.all : tot[`n${st[0]}`];
+  const oldKey = st === '4xx' && all.some((r) => r.key.name === 'old-pos' && r.status === 401);
+  const label = (k) => (k === 'all' ? t('rq.all') : k);
+  return h`<div class="row ky-filters">
+      <div class="seg ky-rq-seg" role="group" aria-label="${t('rq.statusAria')}">${RQ_STATUS.map((k) => h`<button type="button" data-action="rq.status" data-value="${k}" aria-pressed="${st === k}"><span>${label(k)}</span> <span class="ky-rq-n tnum">${fmt.int(k === 'all' ? tot.all : tot[`n${k[0]}`])}</span></button>`)}</div>
+      <label class="ky-search">${icon('search', 'ico-sm')}<input class="input mono" type="search" data-field="rqQ" data-action="rq.search" value="${ctx.state.rqQ}" placeholder="req_01JB… · /voice/otp · 422" aria-label="${t('rq.searchAria')}" autocomplete="off" spellcheck="false"></label>
+      <span class="grow"></span><span class="hint-xs">${t('ev.kept')}</span></div>
+    ${oldKey ? h`<div class="note note-warn">${icon('key')}<span>${t('rq.oldKey', { n: fmt.int(OLD_KEY_401), total: fmt.int(tot.n4), name: 'old-pos' })} <a class="linkbtn" href="#/keys?tab=keys" data-action="rq.oldkey">${t('rq.oldKeyLink')}</a></span></div>` : ''}
+    ${rows.length ? h`<div class="card"><div class="tbl-wrap" data-pin="none"><table class="tbl ky-rqtbl"><thead><tr><th>${t('rq.col.time')}</th><th>${t('rq.col.req')}</th><th>${t('rq.col.status')}</th><th class="num">${t('rq.col.ms')}</th><th class="ky-c-rqkey">${t('rq.col.key')}</th><th>${t('rq.col.id')}</th></tr></thead>
+      <tbody>${rows.map((r) => h`<tr class="${r.status >= 400 ? 'ky-rq-bad' : ''} ${r.session ? 'new-row' : ''}" data-req="${r.id}">
+        <td class="mono nowrap ky-rq-time">${fmt.time(r.at)}</td>
+        <td class="ky-rq-req"><a class="ky-rq-link" href="#/keys?tab=requests${st !== 'all' ? `&status=${st}` : ''}&req=${r.id}" data-action="rq.row" translate="no"><span class="ky-rq-m">${r.method}</span> <span class="mono">${r.path}</span></a></td>
+        <td class="nowrap ky-rq-st"><span class="chip ${r.status >= 500 ? 'chip-err' : r.status >= 400 ? 'chip-warn' : 'chip-ok'}" translate="no">${r.status}</span>${r.code ? h` <code class="mono hint-xs" translate="no">${r.code}</code>` : ''}</td>
+        <td class="num mono nowrap ky-rq-ms">${t('wt.ms', { ms: fmt.int(r.ms) })}</td>
+        <td class="ky-c-rqkey"><span class="mono" translate="no">${r.key.name}</span>${r.key.status === 'revoked' ? h` <span class="chip chip-err">${t('rq.revoked')}</span>` : ''}</td>
+        <td class="ky-rq-id">${reqIdLine(r.id)}</td></tr>`)}</tbody></table></div>
+      <div class="card-foot hint-xs">${t('rq.foot', { shown: fmt.int(rows.length), n: fmt.int(q ? inBucket.length : count) })} · ${t('rq.sample')}</div></div>`
+      : h`<div class="card"><div class="empty empty-center" role="status"><strong>${q ? t('rq.noMatch') : t('rq.noneStatus', { status: label(st) })}</strong><button type="button" class="btn btn-sm" data-action="rq.clear">${t('clear')}</button></div></div>`}`;
+}
+
+// The request drawer follows ?req= (linkable, survives reload and Back).
+const RQ = { handle: null, id: null, programmatic: false };
+
+function rqBody(ctx, r) {
+  const { t, html: h, icon, fmt } = ctx;
+  const call = r.callId ? ctx.list('calls').find((c) => c.id === r.callId) : null;
+  const errLoc = r.code ? ERRORS.find((x) => x.code === r.code) : null;
+  const reqText = `${r.method} ${API_BASE}${r.path}\nAuthorization: Bearer ${maskKey(r.key.prefix, r.key.last4)}${r.body ? `\nContent-Type: application/json\n\n${JSON.stringify(r.body, null, 2)}` : ''}`;
+  const resText = `HTTP ${r.status} ${HTTP_TEXT[r.status] || ''}\nRequest-Id: ${r.id}\nContent-Type: application/json\n\n${JSON.stringify(r.res, null, 2)}`;
+  return h`<div class="stack-3 ky-rq-d">
+    <div class="row"><span class="chip ${r.status >= 500 ? 'chip-err' : r.status >= 400 ? 'chip-warn' : 'chip-ok'}" translate="no">${r.status} ${HTTP_TEXT[r.status] || ''}</span><span class="hint-xs">${fmt.dateTime(r.at)} · ${t('wt.ms', { ms: fmt.int(r.ms) })}</span></div>
+    <div>${reqIdLine(r.id, { hint: r.status >= 400, cls: 'rq-left' })}</div>
+    ${r.status >= 400 ? h`<div class="note ${r.status >= 500 ? 'note-err' : 'note-warn'}">${icon('alert-circle')}<div class="grow"><strong class="mono" translate="no">${r.code || r.status}</strong> · ${errLoc ? ctx.loc(errLoc.text) : t('rq.d.5xx')}
+      ${r.key.status === 'revoked' ? h`<br><span class="hint-xs">${t('rq.d.revokedKey', { name: r.key.name })}</span>` : ''}
+      <div><a class="linkbtn hint-xs" href="#/help/errors" data-action="rq.d.errors">${t('rq.d.errorsLink')}</a></div></div></div>` : ''}
+    <div class="ky-rq-kv">
+      <div class="kv"><span class="k">${t('rq.col.key')}</span><span class="v mono" translate="no">${r.key.name} · ${maskKey(r.key.prefix, r.key.last4)}</span></div>
+      <div class="kv"><span class="k">${t('rq.d.ip')}</span><span class="v mono" translate="no">${r.ip || '—'}</span></div>
+      ${call ? h`<div class="kv"><span class="k">${t('rq.d.call')}</span><span class="v"><a class="linkbtn mono" href="#/logs?call=${call.id}" data-action="rq.d.call" translate="no">${call.id}</a></span></div>` : ''}
+    </div>
+    <span class="label">${t('insp.request')}</span><pre class="code ky-pre" translate="no">${reqText}</pre>
+    ${r.redacted ? h`<p class="hint-xs">${t('rq.d.redacted')}</p>` : ''}
+    <span class="label">${t('insp.response')}</span><pre class="code ky-pre" translate="no">${resText}</pre>
+    <p class="hint-xs">${t('insp.note')}</p></div>`;
+}
+
+function openReq(ctx, r) {
+  if (RQ.handle && RQ.id === r.id) return;
+  if (RQ.handle) { RQ.id = r.id; RQ.handle.setTitle(`${r.method} ${r.path}`); RQ.handle.setBody(rqBody(ctx, r)); return; }
+  RQ.id = r.id;
+  const st = rqStatusOf(ctx.params);
+  RQ.handle = ctx.ui.drawer({
+    title: `${r.method} ${r.path}`, wide: true, className: 'ky-rq-drawer',
+    body: rqBody(ctx, r),
+    actions: { 'rq.d.errors': noop, 'rq.d.call': noop },
+    buttons: [
+      { label: ctx.t('rq.d.copyRes'), icon: 'copy', action: 'rq.d.copyres', onClick: (hd, btn) => { const cur = requestsList(ctx).find((x) => x.id === RQ.id) || r; ctx.ui.copy(JSON.stringify(cur.res, null, 2), btn); return false; } },
+      { label: ctx.t('common.close'), kind: 'navy', action: 'rq.d.close' },
+    ],
+    onClose: () => {
+      const was = RQ.id;
+      RQ.handle = null;
+      RQ.id = null;
+      if (RQ.programmatic) { RQ.programmatic = false; return; }
+      if (/^#\/keys\?(.*&)?tab=requests/.test(location.hash) && /[?&]req=/.test(location.hash)) {
+        ctx.state.focusReq = was;
+        ctx.go(`keys?tab=requests${st !== 'all' ? `&status=${st}` : ''}`, { replace: true });
+      }
+    },
+  });
+}
+function closeReq() {
+  if (!RQ.handle) return;
+  RQ.programmatic = true;
+  RQ.handle.close();
+}
+
 export function render(ctx) {
   const { html: h } = ctx;
   const tab = tabOf(ctx.params);
-  const body = tab === 'webhooks' ? webhooksTab(ctx) : tab === 'events' ? eventsTab(ctx) : keysTab(ctx);
+  const body = tab === 'webhooks' ? webhooksTab(ctx) : tab === 'events' ? eventsTab(ctx) : tab === 'requests' ? requestsTab(ctx) : keysTab(ctx);
   return h`<div class="page ky">${header(ctx, tab)}${tiles(ctx)}${tabs(ctx, tab)}<div class="ky-body" role="tabpanel">${body}</div></div>`;
 }
 
@@ -501,7 +733,7 @@ function runTest(ctx, whId) {
     st.freshEv = ev.id;
     ctx.store.update('webhooks', (list) => list.map((x) => (x.id === whId ? { ...x, lastDelivery: res.code ? { at, code: res.code, ms: res.ms } : { at, code: null, timeout: true } } : x)));
     if (res.ok) ctx.ui.toast(t('toast.T10', { code: res.code, ms: res.ms }), { kind: 'success' });
-    else ctx.ui.toast(res.code ? t('wt.failToast', { code: res.code, host: hostOf(wh.url) }) : t('wt.timeoutToast', { host: hostOf(wh.url) }), { kind: 'warn', demo: true });
+    else ctx.ui.toast(res.code ? t('wt.failToast', { code: res.code, host: hostOf(wh.url) }) : t('wt.timeoutToast', { host: hostOf(wh.url) }), { kind: 'error', demo: true, reqId: reqId(`keys/webhooks|${wh.id}|${res.code || 'timeout'}`) });
     redraw(ctx);
   }, dead ? 1900 : crm ? 2100 : 1250);
 }
@@ -600,6 +832,12 @@ export function mount(root, ctx) {
 
   ctx.actions(root, {
     'ky.connect': noop, 'ky.tab': noop, 'ky.tile.delivery': noop,
+    // Already showing what the tile opens: point at the list instead of reloading the same view.
+    'ky.tile.requests': (el, ev) => { if (location.hash === el.getAttribute('href')) { ev.preventDefault(); flashTo(root, '.ky-body > .card, .ky-body > .ky-empty'); } },
+    // requests log
+    'rq.row': noop, 'rq.search': noop, 'rq.empty.connect': noop, 'rq.oldkey': noop,
+    'rq.status': (el) => { const v = el.dataset.value; ctx.go(`keys?tab=requests${v !== 'all' ? `&status=${v}` : ''}`, { replace: true }); },
+    'rq.clear': () => { ctx.state.rqQ = ''; if (rqStatusOf(ctx.params) !== 'all') ctx.go('keys?tab=requests', { replace: true }); else ctx.rerender(); },
     // Already on Webhooks: the tile scrolls to the failed list instead of reloading the tab it is on.
     'ky.tile.failed': (el, ev) => { if (tab === 'webhooks') { ev.preventDefault(); toFailed(root); } }, 'ky.empty.connect': noop, 'wh.events': noop, 'ev.empty.webhooks': noop,
     'wh.verify.help': noop, 'wh.verify.wh': noop, 'wh.verify.ts': noop, 'wh.verify.body': noop, 'wh.verify.sig': noop, 'wh.ev.search': noop, 'wh.ev.status': noop,
@@ -656,6 +894,7 @@ export function mount(root, ctx) {
 
   ctx.inputs(root, {
     evQ: (v) => ctx.setState({ evQ: v }),
+    rqQ: (v) => ctx.setState({ rqQ: v }),
     evStatus: (v) => ctx.setState({ evStatus: v }),
     vWh: async (v) => { s.verify.wh = v; s.verify.sig = ''; s.verify.result = null; const w = ctx.list('webhooks').find((x) => x.id === v); if (w) s.verify.sig = `v1=${await hmacHex(secretOf(w), `${s.verify.ts}.${s.verify.payload}`)}`; redraw(ctx); },
     vTs: (v) => { s.verify.ts = v.trim(); s.verify.result = null; },
@@ -674,11 +913,33 @@ export function mount(root, ctx) {
     });
   }
   if (tab === 'webhooks') prefillVerify(ctx, root);
+  // Requests: a click anywhere on a row opens it; the drawer follows ?req=.
+  if (tab === 'requests') {
+    ctx.on(root, 'click', '.ky-rqtbl tbody tr', (ev, tr) => {
+      if (ev.target.closest('a, button, input')) return;
+      const a = tr.querySelector('[data-action="rq.row"]');
+      if (!a) return;
+      ev.__handled = true;
+      ctx.go(a.getAttribute('href').slice(2));
+    });
+  }
+  const want = tab === 'requests' ? ctx.params.query.req : null;
+  const req = want ? requestsList(ctx).find((r) => r.id === want) : null;
+  if (req) openReq(ctx, req);
+  else closeReq();
+  if (want && !req && ctx.state.missingReq !== want) { ctx.state.missingReq = want; ctx.later(() => ctx.ui.toast(t('rq.notFound', { id: want }), { kind: 'warn' }), 50); }
+  if (!req && ctx.state.focusReq) {
+    const fr = ctx.state.focusReq;
+    ctx.state.focusReq = null;
+    ctx.later(() => { const a = root.querySelector(`tr[data-req="${fr}"] [data-action="rq.row"]`); if (a) a.focus({ preventScroll: true }); }, 30);
+  }
   if (tab === 'webhooks' && ctx.params.query.focus === 'failed') ctx.later(() => toFailed(root), 60);
 }
 
-function toFailed(root) {
-  const card = root.querySelector('.ky-failed');
+function toFailed(root) { flashTo(root, '.ky-failed, .ky-body > .ky-empty'); }
+
+function flashTo(root, sel) {
+  const card = root.querySelector(sel);
   if (!card) return;
   card.setAttribute('tabindex', '-1');
   card.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });

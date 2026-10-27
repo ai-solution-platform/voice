@@ -133,3 +133,8 @@
   .nm-tbl .nm-route { min-width: 170px; }
   .nm-tbl .nm-cid { min-width: 130px; }
 }
+.nm-prorate { margin: -2px 0 2px; text-align: right; }
+.nm-fee-v { text-align: right; }
+.nm-block { display: block; }
+.nm-cost-h { flex-wrap: wrap; }
+.nm-cost-h .chip { white-space: normal; max-width: 100%; }

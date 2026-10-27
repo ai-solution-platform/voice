@@ -100,21 +100,21 @@ function membersPanel(ctx) {
   const row = (m) => {
     const self = m.email === me(ctx);
     if (m.pending) {
-      return h`<tr class="${ctx.state.fresh === m.id ? 'new-row' : ''}"><td><span class="row-tight"><span class="us-av us-av-pending">${icon('mail', 'ico-sm')}</span><span class="stack" style="gap:0"><span class="strong mono" translate="no">${m.email}</span><span class="hint-xs">${t('m.invited', { date: fmt.dayMonth(m.invitedAt), time: fmt.timeShort(m.invitedAt) })}</span></span></span></td>
-        <td class="mono hint" translate="no">${m.email}</td><td><span class="chip">${t(`role.${m.role}`)}</span></td><td>${accessLabel(ctx, m.access)}</td>
-        <td><span class="chip chip-warn">${t('m.pending')}</span></td><td class="hint">—</td>
-        <td class="num nowrap"><button type="button" class="btn btn-sm" data-action="us.pending.resend" data-value="${m.id}">${icon('send')}${t('m.resend')}</button>
+      return h`<tr class="${ctx.state.fresh === m.id ? 'new-row' : ''} is-pending"><td class="us-c-name"><span class="row-tight"><span class="us-av us-av-pending">${icon('mail', 'ico-sm')}</span><span class="stack" style="gap:0"><span class="strong mono" translate="no">${m.email}</span><span class="hint-xs">${t('m.invited', { date: fmt.dayMonth(m.invitedAt), time: fmt.timeShort(m.invitedAt) })}</span></span></span></td>
+        <td class="mono hint us-c-email us-c-dup" translate="no">${m.email}</td><td data-label="${t('m.role')}"><span class="chip">${t(`role.${m.role}`)}</span></td><td data-label="${t('m.access')}">${accessLabel(ctx, m.access)}</td>
+        <td data-label="${t('m.twofa')}"><span class="chip chip-warn">${t('m.pending')}</span></td><td class="hint" data-label="${t('m.last')}">—</td>
+        <td class="num nowrap us-c-act"><button type="button" class="btn btn-sm" data-action="us.pending.resend" data-value="${m.id}">${icon('send')}${t('m.resend')}</button>
           <button type="button" class="btn btn-sm btn-ghost btn-danger-ghost" data-action="us.pending.revoke" data-value="${m.id}">${t('m.revoke')}</button></td></tr>`;
     }
-    return h`<tr class="${ctx.state.fresh === m.id ? 'new-row' : ''}"><td><span class="row-tight"><span class="us-av">${m.name.slice(0, 1)}</span><span class="strong">${m.name}</span>${self ? h`<span class="chip chip-navy">${t('m.you')}</span>` : ''}</span></td>
-      <td class="mono hint" translate="no">${m.email}</td><td><span class="chip ${m.role === 'owner' ? 'chip-brand' : ''}">${t(`role.${m.role}`)}</span></td><td>${accessLabel(ctx, m.access)}</td>
-      <td>${m.twoFactor ? h`<span class="chip chip-ok">${icon('shield-check')}${t('m.on')}</span>` : h`<span class="chip chip-warn" tabindex="0" data-tip-key="${needs2fa(m.role) ? 'users.m.requiredTip' : 'users.m.allowedTip'}">${t('m.notSet')}</span>`}</td>
-      <td class="nowrap hint">${m.lastSignIn ? `${fmt.dayMonth(m.lastSignIn)} ${fmt.timeShort(m.lastSignIn)}` : '—'}</td>
-      <td class="num"><button type="button" class="btn btn-sm" data-action="us.edit" data-value="${m.id}">${icon('edit')}${t('m.edit')}</button></td></tr>`;
+    return h`<tr class="${ctx.state.fresh === m.id ? 'new-row' : ''}"><td class="us-c-name"><span class="row-tight"><span class="us-av">${m.name.slice(0, 1)}</span><span class="strong">${m.name}</span>${self ? h`<span class="chip chip-navy">${t('m.you')}</span>` : ''}</span></td>
+      <td class="mono hint us-c-email" translate="no">${m.email}</td><td data-label="${t('m.role')}"><span class="chip ${m.role === 'owner' ? 'chip-brand' : ''}">${t(`role.${m.role}`)}</span></td><td data-label="${t('m.access')}">${accessLabel(ctx, m.access)}</td>
+      <td data-label="${t('m.twofa')}">${m.twoFactor ? h`<span class="chip chip-ok">${icon('shield-check')}${t('m.on')}</span>` : h`<span class="chip chip-warn" tabindex="0" data-tip-key="${needs2fa(m.role) ? 'users.m.requiredTip' : 'users.m.allowedTip'}">${t('m.notSet')}</span>`}</td>
+      <td class="nowrap hint" data-label="${t('m.last')}">${m.lastSignIn ? `${fmt.dayMonth(m.lastSignIn)} ${fmt.timeShort(m.lastSignIn)}` : '—'}</td>
+      <td class="num us-c-act"><button type="button" class="btn btn-sm" data-action="us.edit" data-value="${m.id}">${icon('edit')}${t('m.edit')}</button></td></tr>`;
   };
   return h`<section class="card" aria-labelledby="us-m-h"><div class="card-head"><h2 id="us-m-h">${t('m.title')}</h2>
       <a class="linkbtn us-2fa" href="#/settings?tab=security" data-action="us.2fa.policy">${icon('shield-check')}${t('m.policy')}</a></div>
-    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('m.name')}</th><th>${t('m.email')}</th><th>${t('m.role')}</th><th>${ctx.term(t('m.access'), 'subaccount')}</th><th>${t('m.twofa')}</th><th>${t('m.last')}</th><th><span class="sr-only">${t('m.actions')}</span></th></tr></thead>
+    <div class="tbl-wrap"><table class="tbl us-mtbl"><thead><tr><th>${t('m.name')}</th><th>${t('m.email')}</th><th>${t('m.role')}</th><th>${ctx.term(t('m.access'), 'subaccount')}</th><th>${t('m.twofa')}</th><th>${t('m.last')}</th><th><span class="sr-only">${t('m.actions')}</span></th></tr></thead>
       <tbody>${list.map(row)}</tbody></table></div>
     ${list.length <= 1 ? h`<div class="empty us-alone"><span class="art">${icon('users')}</span><strong>${t('m.aloneTitle')}</strong><span class="hint">${t('m.aloneHint')}</span>
       <button type="button" class="btn btn-sm btn-navy" data-action="us.invite">${icon('plus')}${t('invite')}</button></div>` : ''}
@@ -178,9 +178,9 @@ function auditPanel(ctx) {
     ${rows.length ? h`<div class="tbl-wrap"><table class="tbl us-audit"><thead><tr><th>${t('audit.time')}</th><th>${t('audit.whoCol')}</th><th>${t('audit.what')}</th><th>${t('audit.target')}</th><th>${t('audit.ip')}</th><th>${t('audit.viaCol')}</th></tr></thead>
       <tbody>${rows.map((ev) => {
         const i = all.indexOf(ev);
-        return h`<tr class="us-click" data-action="us.audit.row" data-value="${i}" tabindex="0"><td class="nowrap mono">${fmt.dayMonth(ev.at)} ${fmt.timeShort(ev.at)}${ev.until ? `–${fmt.timeShort(ev.until)}` : ''}</td>
-          <td class="nowrap strong">${whoLabel(ctx, ev.who)}</td><td>${whatText(ctx, ev)}</td><td class="mono hint" translate="no">${ev.target || '—'}</td><td class="mono hint" translate="no">${ev.ip || '—'}</td>
-          <td><span class="chip ${ev.via === 'api' ? 'chip-info' : ev.via === 'system' ? 'chip-navy' : ''}">${t(`via.${ev.via}`)}</span></td></tr>`;
+        return h`<tr class="us-click" data-action="us.audit.row" data-value="${i}" tabindex="0"><td class="nowrap mono us-a-time">${fmt.dayMonth(ev.at)} ${fmt.timeShort(ev.at)}${ev.until ? `–${fmt.timeShort(ev.until)}` : ''}</td>
+          <td class="nowrap strong us-a-who">${whoLabel(ctx, ev.who)}</td><td class="us-a-what">${whatText(ctx, ev)}</td><td class="mono hint" translate="no" data-label="${t('audit.target')}">${ev.target || '—'}</td><td class="mono hint" translate="no" data-label="${t('audit.ip')}">${ev.ip || '—'}</td>
+          <td data-label="${t('audit.viaCol')}"><span class="chip ${ev.via === 'api' ? 'chip-info' : ev.via === 'system' ? 'chip-navy' : ''}">${t(`via.${ev.via}`)}</span></td></tr>`;
       })}</tbody></table></div>
       <div class="card-foot hint-xs">${t('audit.count', { n: fmt.int(rows.length), total: fmt.int(all.length) })} · ${t('audit.kept')}</div>`
     : h`<div class="empty"><span class="art">${icon('search')}</span><strong>${t('audit.none')}</strong><span class="hint">${t('audit.noneHint')}</span>

@@ -122,6 +122,8 @@ export default {
   'spend.edit': 'Edit limit',
   'spend.line': 'Voice {voice} · other channels {other}',
   'spend.block': 'At the daily limit new calls are blocked and you get an alert.',
+  'spend.oneBalance': 'One balance for every channel',
+  'spend.oneBalanceLine': "calls, OTP, SMS links and the SMS / LINE fallback after a campaign's last retry use the same credits.",
 
   // trunks
   'trunk.title': 'SIP trunk health',

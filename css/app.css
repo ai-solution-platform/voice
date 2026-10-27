@@ -846,3 +846,22 @@ a:focus-visible .chart-hit, .chart-hit:hover { fill: rgba(242, 99, 34, .18); str
   .credits { padding-right: 10px; }
   .envseg button { padding: 4px 8px; }
 }
+
+/* Request IDs (ui/reqid.js): error states, error toasts, the Keys › Requests log */
+.rq-line { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 8px; font-size: var(--fs-xs); color: var(--slate); max-width: 100%; }
+.rq-line .rq-id { font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--hover); color: var(--text-2); word-break: break-all; user-select: all; }
+.rq-copy { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border-strong); background: #fff; color: var(--text-2); border-radius: 7px; padding: 2px 8px; font-size: var(--fs-xs); font-weight: 600; line-height: 1.5; cursor: pointer; }
+.rq-copy:hover { background: var(--hover); }
+.rq-copy.is-copied { border-color: var(--green-fill); color: var(--green-700); }
+.rq-hint { flex-basis: 100%; text-align: center; }
+.errstate .rq-err { margin: 2px 0 6px; }
+.toast .rq-toast { margin-top: 6px; }
+.toast .rq-line { justify-content: flex-start; color: #B9C5DA; }
+.toast .rq-line .rq-id { background: rgba(255,255,255,.12); color: #fff; }
+.toast .rq-copy { background: rgba(255,255,255,.12); border-color: transparent; color: #fff; }
+.toast .rq-copy:hover { background: rgba(255,255,255,.2); }
+.toast .rq-copy.is-copied { color: #7EE0B2; }
+@media (max-width: 767px) {
+  .toast .rq-copy, .toast.has-req .tx { pointer-events: auto; }
+  .toast.has-req:not(.has-action) .tx { display: block; }
+}

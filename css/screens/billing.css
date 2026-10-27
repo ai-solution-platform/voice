@@ -81,6 +81,42 @@
 .bl-commit-note { margin: var(--s-3) 0 0; }
 .bl-commit-foot { align-items: center; gap: var(--s-3); flex-wrap: wrap; }
 
+/* commitment plan › burn-down, projection, alerts */
+.bl-burn { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--s-4) var(--s-5); margin-top: var(--s-4); padding-top: var(--s-4); border-top: 1px solid var(--border); align-items: start; }
+.bl-burn-h { justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.bl-burn-svg { width: 100%; height: auto; display: block; font-size: 12px; }
+.bl-burn-svg .g { stroke: var(--border); }
+.bl-burn-svg .ax { fill: var(--slate); }
+.bl-burn-svg .lbl { fill: var(--slate); font-size: 11px; }
+.bl-burn-svg .lbl.strong { fill: var(--text-2); font-weight: 600; }
+.bl-burn-svg .lim { stroke: var(--navy); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.bl-burn-svg .lim80 { stroke: var(--amber); stroke-width: 1; stroke-dasharray: 3 4; }
+.bl-burn-svg .ideal { stroke: var(--slate); stroke-width: 1.5; stroke-dasharray: 5 5; }
+.bl-burn-svg .area { fill: var(--navy); opacity: .08; }
+.bl-burn-svg .used { fill: none; stroke: var(--navy); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.bl-burn-svg .proj { stroke: var(--orange); stroke-width: 2.5; stroke-dasharray: 2 5; stroke-linecap: round; }
+.bl-burn-svg .now { fill: var(--orange); stroke: #fff; stroke-width: 2; }
+.bl-burn-svg .end { fill: #fff; stroke: var(--orange); stroke-width: 2; }
+.ln { display: inline-block; width: 16px; height: 0; border-top: 2.5px solid var(--navy); vertical-align: middle; }
+.ln-ideal { border-top: 2px dashed var(--slate); }
+.ln-proj { border-top: 2.5px dotted var(--orange); }
+.ln-plan { border-top: 2px dashed var(--navy); opacity: .7; }
+.bl-proj { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r); background: var(--sunken); }
+.bl-proj strong { font-size: var(--fs-lg); }
+.bl-over { color: var(--amber-700); font-weight: 600; font-size: var(--fs-sm); }
+.bl-unused { color: var(--text-2); font-weight: 600; font-size: var(--fs-sm); }
+.bl-alerts { display: flex; flex-direction: column; gap: 8px; }
+.bl-alert-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px dashed var(--border); }
+.bl-alert-row .toggle { margin-top: 2px; }
+.bl-alert-row .grow { min-width: 0; }
+
+/* postpaid › upcoming invoice */
+.bl-up { border-color: var(--navy-50); }
+.bl-up-tbl td:first-child { min-width: 200px; }
+.bl-up-foot { align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+.bl-up-foot > .grow { flex: 1 1 260px; }
+.bl-m-only { display: none; }
+
 /* spending limits: one card, two columns */
 .bl-limits-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-3) var(--s-6); align-items: start; }
 
@@ -118,6 +154,7 @@
 
 @media (max-width: 1279px) {
   .bl-row1 { grid-template-columns: minmax(0, 1fr); }
+  .bl-burn { grid-template-columns: minmax(0, 1fr); }
   .bl-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .bl-facts { grid-template-columns: minmax(0, 1fr); }
 }
@@ -138,6 +175,12 @@
   .bl-day .wd { display: none; }
   .bl-day .wdn { display: inline; }
   .bl-calc-input { grid-template-columns: minmax(0, 1fr); }
+  .bl-d-only { display: none; }
+  .bl-m-only { display: block; }
+  .bl-up-tbl td:first-child { min-width: 0; }
+  .bl-burn-svg { font-size: 21px; }
+  .bl-burn-svg .lbl { font-size: 19px; }
+  .bl-burn-svg .ax-odd { display: none; }
   .bl-kv { grid-template-columns: minmax(0, 1fr); }
   .bl-kv .v { text-align: left; justify-self: start; }
   .bl-kv .row-tight { justify-content: flex-start; }
