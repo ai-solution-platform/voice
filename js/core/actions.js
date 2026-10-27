@@ -222,6 +222,9 @@ export function postpaidInvoices(profile = billingProfile()) {
  * A plan starts on the 1st of this month (cycle day 1) with this month's outbound minutes already counted.
  */
 export function setBillingPreset(preset, { planId = 'plan50k' } = {}) {
+  // Leaving prepaid + plan: take back what switching it on changed (plan credits, repriced minutes, plan invoice).
+  const prevAdj = prepaidPlanAdjust();
+  if (prevAdj) shiftPrepaidPlan(prevAdj, -1);
   const postpaid = preset.startsWith('postpaid');
   const withPlan = preset.endsWith('-plan');
   const plan = withPlan ? makePlan(planId, { cycleStartDay: 1, usedMinutes: monthMinutes(), unusedPolicy: 'expire', startedAt: '2026-10-01' }) : null;
@@ -236,9 +239,42 @@ export function setBillingPreset(preset, { planId = 'plan50k' } = {}) {
     plan,
   };
   profile.invoices = postpaid ? sampleInvoices(profile) : [];
+  if (!postpaid && plan) {
+    // Prepaid + plan: the plan charge is paid (an invoice) and added as plan credits on the cycle day, and this
+    // month's outbound minutes are drawn at the plan rate — so the balance, usage and statement all move with it.
+    const r2 = (x) => Math.round(x * 100) / 100;
+    const today = (store.get('series') || []).find((d) => d.date === iso().slice(0, 10));
+    const net = creditsToThb(plan.monthlyCharge, creditRate());
+    plan.prepaidAdj = {
+      planCredits: plan.monthlyCharge, minutes: monthMinutes(), date: plan.startedAt,
+      reprice: r2(monthMinutes() * (PRICES.outbound - plan.rate)), repriceToday: r2((today ? today.outMin : 0) * (PRICES.outbound - plan.rate)),
+      invoice: { id: 'INV-2610-0100', date: plan.startedAt || iso().slice(0, 10), credits: plan.monthlyCharge, plan: plan.id, net, vat: Math.round(net * 7) / 100, total: Math.round(net * 107) / 100 },
+    };
+    shiftPrepaidPlan(plan.prepaidAdj, 1);
+  }
   store.set('billing.profile', profile);
   audit('billing.mode-changed', { mode: profile.mode, plan: plan ? plan.id : null });
   return profile;
+}
+
+/** Prepaid + plan (demo): what switching the plan on added to this month — { planCredits, reprice, repriceToday, minutes, invoice } or null. */
+export function prepaidPlanAdjust(profile = billingProfile()) {
+  return (profile.mode === 'prepaid' && profile.plan && profile.plan.prepaidAdj) || null;
+}
+/** Apply (sign 1) or take back (sign −1) a prepaid plan's effect on the balance, this month's usage and the invoices. */
+function shiftPrepaidPlan(adj, sign) {
+  const r2 = (x) => Math.round(x * 100) / 100;
+  store.update('credits.balance', (b) => Math.max(0, r2((b || 0) + sign * (adj.planCredits + adj.reprice))));
+  const um = store.get('billing.usedMonth');
+  if (um) store.set('billing.usedMonth', { ...um, total: r2(um.total - sign * adj.reprice), voice: r2(um.voice - sign * adj.reprice) });
+  const ut = store.get('billing.usedToday');
+  if (ut) store.set('billing.usedToday', { ...ut, total: r2(ut.total - sign * adj.repriceToday), voice: r2(ut.voice - sign * adj.repriceToday) });
+  const us = store.get('billing.usage');
+  if (us) store.set('billing.usage', us.map((u) => (u.item === 'outbound' ? { ...u, credits: r2(u.credits - sign * adj.reprice) } : u)));
+  store.update('billing.invoices', (l) => {
+    const rest = (l || []).filter((i) => i.id !== adj.invoice.id);
+    return sign > 0 ? [...rest, adj.invoice].sort((a, b) => String(b.date).localeCompare(String(a.date))) : rest;
+  });
 }
 
 /**

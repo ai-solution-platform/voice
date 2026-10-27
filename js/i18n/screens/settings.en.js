@@ -110,9 +110,9 @@ export default {
   'rec.offKeep': 'Keep the notice',
 
   'loc.title': 'Data location and calling rules',
-  'loc.chip': 'Stored in Thailand',
-  'loc.tip': 'Recordings and call logs are stored in Thailand.',
-  'loc.text': 'Recordings and call logs are stored in Thailand; text-to-speech and transcription use external speech providers.',
+  'loc.chip': 'Thailand storage (planned)',
+  'loc.tip': 'Recordings and call logs will be stored in Thailand (planned).',
+  'loc.text': 'Recordings and call logs will be stored in Thailand (planned); text-to-speech and transcription use external speech providers.',
   'dest.title': 'Allowed destinations',
   'dest.hint': 'Thai numbers only by default · managed with the spending limits',
   'dest.link': 'Billing › Spending limits',

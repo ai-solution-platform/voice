@@ -5,7 +5,7 @@
 // Every price comes from js/data/prices.js; every total from the store (js/data/active.js) so Overview = Billing = Reports.
 
 import { html as h, raw, on, reducedMotion } from '../core/dom.js';
-import { isActive, balance, addSalesRequest, describeProfile, isPostpaid, postpaidInvoices, creditRate } from '../core/actions.js';
+import { isActive, balance, addSalesRequest, describeProfile, isPostpaid, postpaidInvoices, creditRate, prepaidPlanAdjust } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
 import { PRICES, comparePlans, paygCost, firstTopUpOfferActive } from '../data/prices.js';
 
@@ -44,25 +44,30 @@ function statements(ctx) {
   const demoInv = invoices(ctx).filter((i) => i.demo);
   const demoCredits = demoInv.reduce((s, i) => s + i.credits, 0);
   const demoBonus = demoInv.reduce((s, i) => s + (i.bonus || 0), 0);
+  // Prepaid + plan: the plan credits added on the cycle day are part of this month's money in.
+  const adj = prepaidPlanAdjust();
+  const planCredits = adj ? adj.planCredits : 0;
   if (!list.length) {
-    if (!demoInv.length) return [];
-    return [{ period: CUR_PERIOD, status: 'current', opening: 0, topUps: demoCredits, bonus: demoBonus, used: r2(demoCredits + demoBonus - balance()), closing: balance(), usedVoice: r2(demoCredits + demoBonus - balance()) }];
+    if (!demoInv.length && !adj) return [];
+    const used = Math.max(0, r2(demoCredits + demoBonus + planCredits - balance()));
+    return [{ period: CUR_PERIOD, status: 'current', opening: 0, topUps: demoCredits, bonus: demoBonus, planCredits, used, closing: balance(), usedVoice: used }];
   }
   return list.map((s) => {
     if (s.status !== 'current') return { ...s, usedVoice: SEP_VOICE_USED };
     const topUps = s.topUps + demoCredits;
     const bonus = s.bonus + demoBonus;
     const closing = balance();
-    const used = r2(s.opening + topUps + bonus - closing);
+    const used = r2(s.opening + topUps + bonus + planCredits - closing);
     const usedVoice = r2(used - ((ctx.store.get('billing.usedMonth') || {}).other || 0));
-    return { ...s, topUps, bonus, closing, used, usedVoice };
+    return { ...s, topUps, bonus, planCredits, closing, used, usedVoice };
   });
 }
 /** Credits spent by calls made in this demo session (live account), on top of the sample month. */
 function demoSpend(ctx) {
   const cur = ctx.list('billing.statements').find((s) => s.status === 'current');
   if (!cur) return 0;
-  return Math.max(0, r2(cur.closing + demoTopUps(ctx) - balance()));
+  const adj = prepaidPlanAdjust();
+  return Math.max(0, r2(cur.closing + demoTopUps(ctx) + (adj ? adj.planCredits + adj.reprice : 0) - balance()));
 }
 function usedToday(ctx) {
   if (!ctx.store.get('billing.usedToday')) { const used = (statements(ctx)[0] || {}).used || 0; return { total: used, voice: used, other: 0 }; }
@@ -143,11 +148,19 @@ function busy(btn, ms = 600) {
 }
 
 // ---------- pieces ----------
+/** The subtitle names how this account pays: prepaid · postpaid · either one with a monthly commitment plan. */
+function subtitle(ctx) {
+  const d = describeProfile();
+  const vars = { platform: ctx.fmt.int(PRICES.platform) };
+  if (d.plan) Object.assign(vars, { min: ctx.fmt.int(d.plan.committedMinutes), rate: ctx.fmt.rate(d.plan.rate) });
+  const key = d.mode === 'postpaid' ? (d.plan ? 'subPostpaidPlan' : 'subPostpaid') : d.plan ? 'subPrepaidPlan' : 'sub';
+  return ctx.t(key, vars);
+}
 function header(ctx) {
   const { t, icon } = ctx;
   const req = planRequest(ctx);
   return h`<div class="page-head">
-    <div class="titles"><h1>${t('title')}${ctx.pageHelp()}</h1><span class="sub">${t('sub', { platform: ctx.fmt.int(PRICES.platform) })}</span></div>
+    <div class="titles"><h1>${t('title')}${ctx.pageHelp()}</h1><span class="sub">${subtitle(ctx)}</span></div>
     <div class="tools">
       ${req ? h`<span class="chip chip-warn" tabindex="0" data-tip-key="billing.planReqTip">${icon('clock')}${t('planReq', { ref: req.ref })}</span>` : ''}
       <button type="button" class="btn" data-action="bl.export">${icon('download')}${t('exportUsage')}</button>
@@ -435,15 +448,17 @@ function statementsCard(ctx) {
   const { t, fmt, icon } = ctx;
   const list = statements(ctx);
   const voiceOnly = ctx.state.stmt === 'voice';
+  const adj = prepaidPlanAdjust();
+  const withPlan = list.some((s) => s.planCredits);
   return h`<section class="card bl-stmt" id="bl-statements" aria-labelledby="bl-stmt-h"><div class="card-head"><h2 id="bl-stmt-h">${t('stmt.title')}</h2>
       <div class="seg seg-sm" role="group" aria-label="${t('stmt.title')}">${['all', 'voice'].map((s) => h`<button type="button" data-action="bl.stmt.seg" data-value="${s}" aria-pressed="${ctx.state.stmt === s}">${t(`stmt.seg.${s}`)}</button>`)}</div></div>
-    ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('stmt.period')}</th><th>${t('stmt.status')}</th><th class="num">${t('stmt.opening')}</th><th class="num">${t('stmt.topups')}</th><th class="num">${t('stmt.bonus')}</th><th class="num">${voiceOnly ? t('stmt.usedVoice') : t('stmt.used')}</th><th class="num">${t('stmt.closing')}</th></tr></thead>
+    ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('stmt.period')}</th><th>${t('stmt.status')}</th><th class="num">${t('stmt.opening')}</th><th class="num">${t('stmt.topups')}</th><th class="num">${t('stmt.bonus')}</th>${withPlan ? h`<th class="num">${t('stmt.planCredits')}</th>` : ''}<th class="num">${voiceOnly ? t('stmt.usedVoice') : t('stmt.used')}</th><th class="num">${t('stmt.closing')}</th></tr></thead>
       <tbody>${list.map((s) => h`<tr><td><span class="strong nowrap">${monthLabel(ctx, s.period)}</span>
           <span class="row-tight bl-files"><button type="button" class="linkbtn hint-xs" data-action="bl.stmt.csv" data-value="${s.period}">${icon('download', 'ico-xs')}${t('stmt.csv')}</button><button type="button" class="linkbtn hint-xs" data-action="bl.stmt.pdf" data-value="${s.period}">${icon('file-text', 'ico-xs')}${t('stmt.pdf')}</button></span></td>
         <td>${s.status === 'current' ? h`<span class="chip chip-warn">${t('stmt.current')}</span>` : h`<span class="chip">${t('stmt.closed')}</span>`}</td>
-        <td class="num mono">${fmt.credits2(s.opening)}</td><td class="num mono">${fmt.credits2(s.topUps)}</td><td class="num mono">${s.bonus ? `+${fmt.credits2(s.bonus)}` : '0.00'}</td>
+        <td class="num mono">${fmt.credits2(s.opening)}</td><td class="num mono">${fmt.credits2(s.topUps)}</td><td class="num mono">${s.bonus ? `+${fmt.credits2(s.bonus)}` : '0.00'}</td>${withPlan ? h`<td class="num mono">${s.planCredits ? `+${fmt.credits2(s.planCredits)}` : '0.00'}</td>` : ''}
         <td class="num mono">${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}</td><td class="num mono strong">${fmt.credits2(s.closing)}</td></tr>`)}</tbody></table></div>
-      <div class="card-foot hint-xs">${voiceOnly ? t('stmt.footVoice') : t('stmt.foot')}</div>`
+      <div class="card-foot hint-xs">${voiceOnly ? t('stmt.footVoice') : withPlan ? t('stmt.footWithPlan') : t('stmt.foot')}${adj ? h`<br>${t('stmt.footPlan', { min: fmt.int(profile().plan.committed), id: adj.invoice.id, date: tableDate(ctx, adj.invoice.date), minutes: fmt.int(adj.minutes), rate: fmt.rate(profile().plan.rate) })}` : ''}</div>`
     : h`<div class="empty"><span class="art">${icon('file-text')}</span><strong>${t('stmt.empty')}</strong><span class="hint">${t('stmt.emptyHint')}</span></div>`}
   </section>`;
 }
@@ -472,7 +487,7 @@ function invoicesCard(ctx) {
   const list = invoices(ctx);
   return h`<section class="card bl-inv" id="bl-invoices" aria-labelledby="bl-inv-h"><div class="card-head"><h2 id="bl-inv-h">${t('inv.title')}</h2><span class="hint">${t('inv.sub')}</span></div>
     ${list.length ? h`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('inv.no')}</th><th>${t('inv.date')}</th><th class="num">${t('inv.credits')}</th><th class="num">${t('inv.net')}</th><th class="num">${t('inv.vat')}</th><th class="num">${t('inv.total')}</th><th><span class="sr-only">${t('stmt.files')}</span></th></tr></thead>
-      <tbody>${list.map((i) => h`<tr class="${ctx.state.fresh === i.id ? 'new-row' : ''}"><td class="mono strong" translate="no">${i.id}${i.demo ? h` <span class="chip chip-navy">${t('common.demoTag')}</span>` : ''}</td><td class="nowrap">${tableDate(ctx, i.date)}</td>
+      <tbody>${list.map((i) => h`<tr class="${ctx.state.fresh === i.id ? 'new-row' : ''}"><td class="mono strong" translate="no">${i.id}${i.demo ? h` <span class="chip chip-navy">${t('common.demoTag')}</span>` : ''}${i.plan ? h` <span class="chip chip-info">${t('inv.plan')}</span>` : ''}</td><td class="nowrap">${tableDate(ctx, i.date)}</td>
         <td class="num mono">${fmt.int(i.credits)}${i.bonus ? h` <span class="hint-xs">+${fmt.int(i.bonus)} ${t('inv.bonus')}</span>` : ''}</td><td class="num mono">${fmt.credits2(i.net)}</td><td class="num mono">${fmt.credits2(i.vat)}</td><td class="num mono strong">${fmt.credits2(i.total)}</td>
         <td class="num nowrap"><button type="button" class="btn btn-sm" data-action="bl.inv.download" data-value="${i.id}">${icon('file-text')}${t('inv.download')}</button>
           <button type="button" class="btn btn-sm" data-action="bl.inv.csv" data-value="${i.id}">${icon('download')}${t('inv.csv')}</button></td></tr>`)}</tbody></table></div>
@@ -610,7 +625,7 @@ function statementHtml(ctx, period) {
     title: t('print.stmtTitle', { month: monthLabel(ctx, period) }),
     filename: `ants-statement-${period}-sample.html`,
     meta: [[t('stmt.period'), monthLabel(ctx, period)], [t('stmt.status'), s.status === 'current' ? t('stmt.current') : t('stmt.closed')], [t('print.scope'), t(`stmt.seg.${voiceOnly ? 'voice' : 'all'}`)]],
-    lines: [[t('stmt.opening'), '', fmt.credits2(s.opening)], [t('stmt.topups'), '', fmt.credits2(s.topUps)], [t('stmt.bonus'), '', fmt.credits2(s.bonus)], [voiceOnly ? t('stmt.usedVoice') : t('stmt.used'), '', `−${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}`]],
+    lines: [[t('stmt.opening'), '', fmt.credits2(s.opening)], [t('stmt.topups'), '', fmt.credits2(s.topUps)], [t('stmt.bonus'), '', fmt.credits2(s.bonus)], ...(s.planCredits ? [[t('stmt.planCredits'), '', fmt.credits2(s.planCredits)]] : []), [voiceOnly ? t('stmt.usedVoice') : t('stmt.used'), '', `−${fmt.credits2(voiceOnly ? s.usedVoice : s.used)}`]],
     totals: [[t('stmt.closing'), fmt.credits2(s.closing)]],
     note: t('print.stmtNote'),
   });

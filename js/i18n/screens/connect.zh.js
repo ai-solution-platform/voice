@@ -5,7 +5,7 @@ export default {
   'crumb.api': 'HTTP API',
   'crumb.sip': 'SIP 中继',
   'cmd.trunk': '创建 SIP 中继',
-  dataNote: '录音和通话记录存储在泰国；文字转语音和语音转写使用外部语音服务商。',
+  dataNote: '录音和通话记录将存储在泰国（计划中）；文字转语音和语音转写使用外部语音服务商。',
 
   'a.title': 'HTTP API',
   'a.rec': '推荐',

@@ -162,6 +162,8 @@ function reasonText(ctx, c) {
   const r = REASONS[c.id];
   if (r) return t(`reason.${r[0]}`, r[1] || {});
   if (c.reasonKey) return t(`reason.${c.reasonKey}`, c.reasonVars || {});
+  // Fail closed: a Thai caller ID is never sent over a non-Thai route — the call is not placed and not charged.
+  if (c.status === 'rejected' && c.code === 'VOICE_4213') return t('reason.thaiRoute');
   if (c.source && c.source.type === 'test-call') return c.status === 'completed' ? t('reason.test') : t('reason.testOther', { status: t(`status.${c.status}`) });
   const e = errorFor(c);
   if (e) return loc(e.text);
@@ -635,7 +637,7 @@ function summaryTab(ctx, c) {
   </div>`;
 }
 function nextKey(c) {
-  if (c.status === 'rejected') return c.code === 'VOICE_4202' ? 'next.intl' : 'next.dnc';
+  if (c.status === 'rejected') return c.code === 'VOICE_4202' ? 'next.intl' : c.code === 'VOICE_4213' ? 'next.thaiRoute' : 'next.dnc';
   if (c.sip === 503) return 'next.503';
   if (c.sip === 404) return 'next.404';
   if (c.sip === 603) return 'next.declined';

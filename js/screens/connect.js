@@ -503,7 +503,7 @@ function wzStep5(ctx) {
       <p class="hint-xs">${t('wz.3.fix', { media: MEDIA_IPS, ports: MEDIA_PORTS })}</p>
       <p class="hint-xs">${t('wz.5.activateRule')}</p>
       <button type="button" class="btn btn-primary btn-block wz-activate ${canActivate ? 'is-ready' : ''}" data-action="wz.5.activate" ${raw(canActivate ? '' : 'aria-disabled="true" aria-describedby="wz-act-h"')}>${icon('check')}${t('wz.5.activate')}</button>
-      <span class="hint-xs" id="wz-act-h">${canActivate ? t('wz.5.ready') : t('wz.5.activateH')}</span>
+      <span class="hint-xs" id="wz-act-h">${canActivate ? t('wz.5.ready') : c.options === 'ok' ? t('wz.5.optionsPassed') : t('wz.5.activateH')}</span>
       <span class="sr-only" aria-live="polite">${w.live}</span>
     </div></div>`;
 }
@@ -564,6 +564,7 @@ function validateName(ctx, v) {
   return KEY_RE.test(v) ? null : ctx.t('api.keyErr');
 }
 
+let needKeyToast = null; // the "create a key first" warning, closed once a key exists
 function createKey(ctx) {
   const a = ctx.state.api;
   a.keyName = keyNameOf(ctx);
@@ -582,6 +583,7 @@ function createKey(ctx) {
     audit('key.created', { name: rec.name, env: rec.env }, rec.id);
     s.api = { ...s.api, busy: false, shownKey: live ? DEMO_KEY_LIVE : DEMO_KEY_SANDBOX, keyId: rec.id, saved: false };
     setStep('connect', 'done');
+    if (needKeyToast) { needKeyToast.close(); needKeyToast = null; } // "Create an API key first" is no longer true
     ctx.ui.toast(ctx.t('toast.T07', { name: rec.name }), { kind: 'success' });
     redraw(ctx, onApi);
   }, 600, 'api');
@@ -864,12 +866,12 @@ export function mount(root, ctx) {
     'cn.api.send': () => {
       // The sample needs a key: without one, point at step 1 instead of pretending the request ran.
       if (!ctx.state.api.keyId && !existingSandboxKey(ctx)) {
-        ctx.ui.toast(t('api.needKey'), { kind: 'warn' });
+        needKeyToast = ctx.ui.toast(t('api.needKey'), { kind: 'warn' });
         const i = root.querySelector('#cn-keyname');
         if (i) { i.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' }); i.focus({ preventScroll: true }); }
         return;
       }
-      ctx.ui.dialer.open({ mode: 'api', source: 'connect', onEnd: () => redraw(ctx, onApi) });
+      ctx.ui.dialer.open({ mode: 'api', source: 'connect', autostart: true, onEnd: () => redraw(ctx, onApi) });
     },
     'cn.api.logs': (el, ev) => { ev.preventDefault(); const cc = connectCall(ctx); if (cc) ctx.go(`logs?call=${cc.id}`); },
     'cn.api.copy.base': (el) => ctx.ui.copy(API_BASE, el),

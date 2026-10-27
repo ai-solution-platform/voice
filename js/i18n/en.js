@@ -90,7 +90,7 @@ export default {
   'help.shortcuts': 'Keyboard shortcuts',
   'help.tour': 'Replay tour',
   'help.supportTitle': 'Thai-speaking support',
-  'help.supportHours': 'Mon–Fri 09:00–18:00 Bangkok time · outages 24/7',
+  'help.supportHours': 'Mon–Fri 09:00–18:00 Bangkok time · outages 24/7 (target)',
   'help.translationPending': 'Thai and Chinese text: native-speaker review pending',
 
   // account
@@ -137,7 +137,7 @@ export default {
   'notif.numberVerified.title': '{number} verified',
   'notif.numberVerified.body': 'Sandbox calls can now reach this number.',
   'notif.incidentResolved.title': 'Resolved: some calls to one mobile network failed',
-  'notif.incidentResolved.body': '14:06–14:24. Calls moved to the backup route. Sample incident.',
+  'notif.incidentResolved.body': '14:06–14:24. Calls moved to the backup Thai carrier route. Sample incident; the backup route is planned.',
   'notif.failureRate.title': 'Failure rate {pct}% in {window} minutes',
   'notif.failureRate.body': '{campaign} · mostly SIP 503. See the failed calls in Logs.',
   'notif.ticketReply.title': 'Support replied to {ticket}',
@@ -306,7 +306,7 @@ export default {
   'term.priority_weight': 'The lower priority is tried first. Weight splits calls between equal priorities.',
   'term.failover': "If a destination doesn't answer in time, we try the next one.",
   'term.scope': 'What a key may do, e.g. calls:write = place calls.',
-  'term.route': 'Which of our two calling routes carried the call. We switch automatically if one has trouble.',
+  'term.route': 'Which calling route carried the call. A backup Thai carrier route is planned for when the main route has trouble. A Thai caller ID is only ever sent over a Thai route.',
   'term.quality': 'MOS 1–5 (4 or more is good) · jitter = uneven audio timing · packet loss = missing audio.',
   'term.subaccount': 'A team or project inside your account, with its own numbers, keys, limits and reports. Preview.',
 

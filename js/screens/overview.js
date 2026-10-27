@@ -146,17 +146,18 @@ function checklist(ctx) {
       const s = steps[r.step];
       const fresh = flash.includes(r.step);
       return h`<li class="ov-row ${fresh ? 'row-flash' : ''}" data-step="${r.step}" data-state="${s}">
-        <span class="ov-circ ${s}">${s === 'done' ? raw(`<svg class="ico ico-sm ${fresh ? 'check-draw' : ''}" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>`) : r.n}</span>
+        <span class="ov-circ is-${s}">${s === 'done' ? raw(`<svg class="ico ico-sm ${fresh ? 'check-draw' : ''}" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>`) : r.n}</span>
         <div class="grow ov-row-txt"><div class="ov-row-t"><strong>${t(`chk.${r.n}.title`)}</strong> <span class="hint">· ${t('chk.minutes', { n: r.min })}</span></div>
-          <div class="ov-row-s ${s}">${statusLine(r)}</div>
+          <div class="ov-row-s is-${s}">${statusLine(r)}</div>
           ${s !== 'done' ? h`<div class="hint">${t(`chk.${r.n}.help`)}</div>` : ''}</div>
         <div class="ov-row-a">${button(r)}</div></li>`;
     })}</ol></section>`;
 }
 
-function tile(ctx, key, value, line, href, tipKey) {
+function tile(ctx, key, value, line, href, tipKey, labelKey) {
   const { html: h, t } = ctx;
-  const inner = h`<span class="t">${tipKey ? ctx.term(t(`tile.${key}`), tipKey) : t(`tile.${key}`)}</span><span class="v">${value}</span><span class="h clamp-2" title="${line}">${line}</span>`;
+  const label = t(labelKey || `tile.${key}`);
+  const inner = h`<span class="t">${tipKey ? ctx.term(label, tipKey) : label}</span><span class="v">${value}</span><span class="h clamp-2" title="${line}">${line}</span>`;
   return href ? h`<a class="card tile tile-link" href="${href}" data-action="ov.tile.${key}">${inner}</a>` : h`<div class="card tile">${inner}</div>`;
 }
 
@@ -183,7 +184,7 @@ function tilesActive(ctx) {
     ${creditsTile(ctx, own, avg)}
     ${tile(ctx, 'calls', fmt.int(st.calls), t('tile.callsLine', { out: fmt.int(st.outbound), otp: fmt.int(st.otp), inb: fmt.int(st.inbound) }), `#/logs?range=${range}`)}
     ${tile(ctx, 'answered', fmt.pct(range === 'today' && !subId ? today.answerRatePct : pctOf(st.answered, st.calls)), t('tile.answeredLine', { a: fmt.int(st.answered), b: fmt.int(st.calls) }), `#/reports?range=${range}`, 'answer_rate')}
-    ${tile(ctx, 'used', fmt.int(st.used), range === 'today' ? t('tile.usedLine', { voice: fmt.int(today.monthVoice), all: fmt.int(today.monthAll) }) : t('tile.usedRange'), '#/billing?section=usage')}
+    ${tile(ctx, 'used', fmt.int(st.used), range === 'today' ? t('tile.usedLine', { voice: fmt.int(today.monthVoice), all: fmt.int(today.monthAll) }) : t('tile.usedRange'), '#/billing?section=usage', null, range === 'today' ? 'tile.usedToday' : null)}
     ${tile(ctx, 'failed', fmt.pct(range === 'today' && !subId ? today.failedPct : pctOf(st.failed, st.calls)), t('tile.failedLine', { n: fmt.int(st.failed), sip: fmt.int(st.failed503) }), `#/logs?status=failed&range=${range}`)}
   </div>`;
 }
@@ -231,7 +232,7 @@ function chartCard(ctx, rs) {
     links: empty ? null : days.map((d) => ({ href: `#/logs?date=${d.date}`, action: 'ov.chart.point', tip: t('chart.pointTip', { day: fmt.dayMonth(d.date), calls: fmt.int(d.calls), answered: fmt.int(d.answered) }) })),
   });
   return h`<div class="card span-2 ov-chart">
-    <div class="card-head"><h2>${t('chart.title')}</h2>${!empty ? h`<span class="hint">${t('chart.total', { total: fmt.int(total), avg: fmt.int(total / days.length) })}</span>` : ''}</div>
+    <div class="card-head"><h2>${t('chart.title')}</h2>${!empty ? h`<span class="hint">${t('chart.total', { total: fmt.int(total), avg: total / days.length < 10 ? fmt.num(total / days.length, 1) : fmt.int(total / days.length) })}</span>` : ''}</div>
     <div class="card-body" style="position:relative">${chart}
       ${empty ? h`<div class="ov-chart-empty"><div class="ov-chart-msg"><strong>${t('chart.empty')}</strong><span class="hint">${t('chart.emptyHint')}</span>
         <button type="button" class="btn btn-sm btn-navy" data-action="ov.chart.empty">${icon('phone')}${t('chart.emptyBtn')}</button></div></div>` : ''}</div></div>`;

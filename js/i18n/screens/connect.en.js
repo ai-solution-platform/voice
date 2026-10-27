@@ -5,7 +5,7 @@ export default {
   'crumb.api': 'HTTP API',
   'crumb.sip': 'SIP trunk',
   'cmd.trunk': 'Create a SIP trunk',
-  dataNote: 'Recordings and call logs are stored in Thailand; text-to-speech and transcription use external speech providers.',
+  dataNote: 'Recordings and call logs will be stored in Thailand (planned); text-to-speech and transcription use external speech providers.',
 
   // card A
   'a.title': 'HTTP API',

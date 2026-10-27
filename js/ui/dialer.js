@@ -27,6 +27,7 @@ import { toast } from './toast.js';
 import { modal } from './modal.js';
 import { copy } from './io.js';
 import { pushLayer, layersRoot } from './overlay.js';
+import { hideTooltip } from './tooltip.js';
 
 const TEMPLATES = ['test', 'otp', 'reminder', 'delivery'];
 const OUTCOMES = ['answered', 'busy', 'no-answer', 'failed'];
@@ -481,6 +482,8 @@ ${JSON.stringify(body, null, 2)}</pre></div>`;
   const api = {
     state: s,
     render,
+    /** Place the call now (same as pressing Call) — openDialer({ autostart: true }). */
+    start: () => { if (!inCall()) start(); },
     inCall,
     costLine,
     hangup,
@@ -524,6 +527,7 @@ export function openDialer(opts = {}) {
       if (opts.from) st.from = opts.from;
       if (OUTCOMES.includes(opts.outcome)) st.outcome = opts.outcome;
       floating.ctrl.render();
+      if (opts.autostart) floating.ctrl.start();
     }
     return floating;
   }
@@ -559,6 +563,9 @@ export function openDialer(opts = {}) {
   floating = { card, ctrl: null, unregister, offs: [], min: false, pill: null };
   floating.ctrl = createController(body, { ...opts, uid: `f${++uidN}`, onRender: sync, onNavigate: () => {} });
   sync();
+  // autostart: the caller's own click already asked for the call (e.g. Connect › API › Send test call), so place it
+  // now — inside that click, which also lets the browser start the audio.
+  if (opts.autostart) floating.ctrl.start();
   floating.offs.push(on(card, 'click', '[data-action="dl.close"]', (ev) => { ev.__handled = true; if (!floating.ctrl.inCall()) closeDialer(); }));
   floating.offs.push(on(card, 'click', '[data-action="dl.full"]', (ev) => { ev.__handled = true; if (!floating.ctrl.inCall()) closeDialer(); else toggleMin(true); }));
   floating.offs.push(on(card, 'click', '[data-action="dl.minimise"]', (ev) => { ev.__handled = true; toggleMin(true); }));
@@ -590,6 +597,7 @@ export function closeDialer() {
   if (!floating) return;
   const f = floating;
   floating = null;
+  hideTooltip(); // a tooltip of the card's own buttons (e.g. "Close the call panel") must not stay behind
   f.ctrl.destroy();
   f.offs.forEach((x) => (typeof x === 'function' ? x() : clearInterval(x)));
   if (f.pill) f.pill.remove();

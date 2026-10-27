@@ -3,6 +3,9 @@
 export default {
   title: 'Billing & Credits',
   sub: 'One credit balance for SMS, LINE, Email and Voice · platform {platform} credits a month · pay as you go with no commitment',
+  subPostpaid: 'One credit balance for SMS, LINE, Email and Voice · platform {platform} credits a month · postpaid: usage is invoiced monthly under your contract',
+  subPrepaidPlan: 'One credit balance for SMS, LINE, Email and Voice · platform {platform} credits a month · prepaid with a {min}-minute monthly plan at {rate} per minute',
+  subPostpaidPlan: 'One credit balance for SMS, LINE, Email and Voice · platform {platform} credits a month · postpaid with a {min}-minute monthly plan at {rate} per minute',
   exportUsage: 'Export usage CSV',
   topup: 'Top up',
   planReq: 'Plan request {ref} · waiting for sales',
@@ -180,6 +183,10 @@ export default {
   'offers.trialLeft': '{left} min left',
   'offers.trialUsed': 'Used · ended {date}',
 
+  'stmt.planCredits': 'Plan credits',
+  'stmt.footWithPlan': 'Opening + top-ups + bonus + plan credits − used = closing. The current month updates as you call and top up.',
+  'stmt.footPlan': 'Plan credits: the {min}-minute plan charge (invoice {id}) was added as credits on {date}. This month\'s {minutes} outbound minutes are priced at the plan rate, {rate} per minute.',
+  'inv.plan': 'Plan charge',
   'stmt.title': 'Statements',
   'stmt.seg.all': 'All channels',
   'stmt.seg.voice': 'Voice only',

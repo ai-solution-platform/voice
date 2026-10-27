@@ -23,7 +23,8 @@ const POPULAR = 20000;
 export const MIN_TOPUP = 2000;
 
 export function openTopUp({ goLive = false, annual = false, source = '' } = {}) {
-  const st = { amount: store.get('mode') === 'active' ? POPULAR : 5000, other: '', otherOn: false, annual, method: 'card', view: 'pick', busy: false };
+  // first: the drawer opens with focus on the selected amount (never on "Other", which would read as choosing it).
+  const st = { amount: store.get('mode') === 'active' ? POPULAR : 5000, other: '', otherOn: false, annual, method: 'card', view: 'pick', busy: false, first: true };
   const firstTopUp = !store.get('credits.firstTopUpUsedAt');
   const amount = () => (st.other ? Number(String(st.other).replace(/[^\d]/g, '')) || 0 : st.amount);
   const bonusNow = () => topUpBonus(amount(), { firstTopUp, annual: st.annual });
@@ -43,7 +44,7 @@ export function openTopUp({ goLive = false, annual = false, source = '' } = {}) 
     return html`
       ${goLive ? html`<div class="note note-info" style="margin-bottom:12px">${icon('rocket')}<div>${t('topup.goLiveNote', { rate: fmt.rate(PRICES.outbound) })}</div></div>` : ''}
       <div class="field"><span class="label">${t('topup.amount')}</span>
-        <div class="grid g-3" style="gap:8px">${AMOUNTS.map((v) => html`<button type="button" class="optcard" data-action="tu.amt" data-value="${v}" aria-pressed="${!st.otherOn && !st.other && st.amount === v}"><span class="t tnum">${fmt.int(v)}</span><span class="h">${v === POPULAR ? t('topup.popular') : t('common.credits')}</span></button>`)}
+        <div class="grid g-3" style="gap:8px">${AMOUNTS.map((v) => html`<button type="button" class="optcard" data-action="tu.amt" data-value="${v}" aria-pressed="${!st.otherOn && !st.other && st.amount === v}" ${raw(st.first && st.amount === v ? 'autofocus' : '')}><span class="t tnum">${fmt.int(v)}</span><span class="h">${v === POPULAR ? t('topup.popular') : t('common.credits')}</span></button>`)}
           <label class="optcard" style="cursor:text" aria-pressed="${st.otherOn || !!st.other}"><span class="t">${t('topup.other')}</span><input class="input tnum" data-tu="other" inputmode="numeric" value="${st.other}" placeholder="${fmt.int(MIN_TOPUP)}" aria-label="${t('topup.otherAria', { min: fmt.int(MIN_TOPUP) })}" style="min-height:30px;padding:4px 8px;margin-top:2px"></label></div>
         ${st.other && !valid ? html`<span class="field-err">${t('topup.min', { min: fmt.int(MIN_TOPUP) })}</span>` : ''}
       </div>
@@ -121,10 +122,17 @@ export function openTopUp({ goLive = false, annual = false, source = '' } = {}) 
     buttons: buttons(),
     actions: { 'tu.amt': (el, ev, h) => { st.amount = Number(el.dataset.value); st.other = ''; st.otherOn = false; refresh(h); } },
   });
+  st.first = false;
+  // Only a real pointer press or key press counts as choosing "Other" — not focus moved there by code.
+  let userAt = 0;
+  const mark = () => { userAt = Date.now(); };
+  on(d.el, 'pointerdown', mark);
+  on(d.el, 'keydown', mark);
   on(d.el, 'input', '[data-tu="other"]', (ev, el) => { st.other = el.value; refresh(d); });
   // Clicking "Other" selects it at once (the amount buttons un-press), before anything is typed. The choice lives in
   // st.otherOn, so it survives re-renders (annual toggle, payment method) and a second click reads as "already selected".
   on(d.el, 'focusin', '[data-tu="other"]', (ev, el) => {
+    if (Date.now() - userAt > 600) return;
     st.otherOn = true;
     d.el.querySelectorAll('[data-action="tu.amt"]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
     el.closest('.optcard').setAttribute('aria-pressed', 'true');

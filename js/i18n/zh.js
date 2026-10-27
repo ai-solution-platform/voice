@@ -88,7 +88,7 @@ export default {
   'help.shortcuts': '键盘快捷键',
   'help.tour': '重新查看导览',
   'help.supportTitle': '泰语支持团队',
-  'help.supportHours': '周一至周五 09:00–18:00（曼谷时间）· 故障 24 小时响应',
+  'help.supportHours': '周一至周五 09:00–18:00（曼谷时间）· 故障 24 小时响应（目标）',
   'help.translationPending': '泰文与中文文本：待母语人士审校',
 
   // account
@@ -135,7 +135,7 @@ export default {
   'notif.numberVerified.title': '号码 {number} 已验证',
   'notif.numberVerified.body': '沙盒现在可以呼叫这个号码。',
   'notif.incidentResolved.title': '已解决：呼叫某移动网络的部分通话失败',
-  'notif.incidentResolved.body': '14:06–14:24，通话已切换到备用线路。示例事件。',
+  'notif.incidentResolved.body': '14:06–14:24，通话已切换到泰国备用线路。示例事件；备用线路为计划功能。',
   'notif.failureRate.title': '{window} 分钟内失败率 {pct}%',
   'notif.failureRate.body': '{campaign} · 主要是 SIP 503。请在通话记录中查看失败的通话。',
   'notif.ticketReply.title': '支持团队已回复 {ticket}',
@@ -304,7 +304,7 @@ export default {
   'term.priority_weight': '优先级数字小者先尝试；权重用于在同一优先级之间分配呼叫。',
   'term.failover': '若目的地在设定时间内无响应，系统将尝试下一个。',
   'term.scope': '密钥可执行的操作，例如 calls:write = 发起呼叫。',
-  'term.route': '承载该通话的线路；若一条线路出现问题，系统自动切换。',
+  'term.route': '承载该通话的线路。计划增加泰国运营商泰国备用线路，供主线路出现问题时使用。泰国来电显示只会通过泰国线路发送。',
   'term.quality': 'MOS 1–5（4 以上为好）· 抖动 = 语音时间不均匀 · 丢包 = 语音丢失。',
   'term.subaccount': '账户内的团队或项目，拥有独立的号码、密钥、上限和报表（预览）。',
 

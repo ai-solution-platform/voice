@@ -12,14 +12,14 @@
 .ov-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: var(--s-3); align-items: center; padding: 14px var(--s-4); border-bottom: 1px solid var(--border); }
 .ov-row:last-child { border-bottom: 0; }
 .ov-circ { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: var(--fs-xs); border: 1.5px solid var(--border-strong); color: var(--slate); background: #fff; }
-.ov-circ.done { background: var(--navy); border-color: var(--navy); color: #fff; }
-.ov-circ.done svg { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
-.ov-circ.progress { border-color: var(--amber); color: var(--amber-700); background: var(--amber-50); }
+.ov-circ.is-done { background: var(--navy); border-color: var(--navy); color: #fff; }
+.ov-circ.is-done svg { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.ov-circ.is-progress { border-color: var(--amber); color: var(--amber-700); background: var(--amber-50); }
 .ov-row-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ov-row-t { font-size: var(--fs); }
 .ov-row-s { font-size: var(--fs-sm); color: var(--slate); }
-.ov-row-s.done { color: var(--green-700); }
-.ov-row-s.progress { color: var(--amber-700); }
+.ov-row-s.is-done { color: var(--green-700); }
+.ov-row-s.is-progress { color: var(--amber-700); }
 .ov-row-a { display: flex; gap: 6px; justify-content: flex-end; }
 .ov-chk-slim { display: flex; align-items: center; gap: var(--s-3); padding: 12px var(--s-4); width: 100%; text-align: left; border: 1px solid var(--border); cursor: pointer; }
 .ov-chk-slim:hover { background: var(--hover); }

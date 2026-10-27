@@ -2,6 +2,9 @@
 export default {
   title: '账单与点数',
   sub: '短信、LINE、邮件和语音共用一个点数余额 · 平台费每月 {platform} 点数 · 按量付费，无需承诺',
+  subPostpaid: '短信、LINE、邮件和语音共用一个点数余额 · 平台费每月 {platform} 点数 · 后付费：按合同每月开具用量发票',
+  subPrepaidPlan: '短信、LINE、邮件和语音共用一个点数余额 · 平台费每月 {platform} 点数 · 预付费，含每月 {min} 分钟套餐，每分钟 {rate}',
+  subPostpaidPlan: '短信、LINE、邮件和语音共用一个点数余额 · 平台费每月 {platform} 点数 · 后付费，含每月 {min} 分钟套餐，每分钟 {rate}',
   exportUsage: '导出用量 CSV',
   topup: '充值',
   planReq: '套餐申请 {ref} · 等待销售回复',
@@ -179,6 +182,10 @@ export default {
   'offers.trialLeft': '剩余 {left} 分钟',
   'offers.trialUsed': '已使用 · {date} 结束',
 
+  'stmt.planCredits': '套餐点数',
+  'stmt.footWithPlan': '期初 + 充值 + 赠送 + 套餐点数 − 已用 = 期末。当期会随通话和充值实时更新。',
+  'stmt.footPlan': '套餐点数：{min} 分钟套餐费用（发票 {id}）已于 {date} 计入点数。本月 {minutes} 分钟外呼按套餐费率计费，每分钟 {rate}。',
+  'inv.plan': '套餐费用',
   'stmt.title': '对账单',
   'stmt.seg.all': '全部渠道',
   'stmt.seg.voice': '仅语音',

@@ -68,6 +68,9 @@ async function boot() {
       if (next === store.get('mode')) return;
       closeDialer();
       setMode(next);
+      // Wizard and form state belongs to the dataset it was filled in: a caller ID, number or trunk picked in one
+      // account must not carry over into the other (same as Reset).
+      resetScreenStates();
       rerender();
       ui.toast(next === 'active' ? t('demo.nowActive') : t('demo.nowFirstRun'), { kind: 'info', demo: true });
     },

@@ -116,6 +116,9 @@ html[lang="th"] .navgroup-h, html[lang="zh-Hans"] .navgroup-h { text-transform: 
 @container (max-width: 140px) { .crumbs > .crumb-link, .crumbs > .crumb-link + .ico { display: none; } }
 @container (max-width: 120px) { .crumbs > strong:not(:last-child), .crumbs > strong:not(:last-child) + .ico { display: none; } }
 @container (max-width: 48px) { .crumbs > * { display: none; } }
+/* set by shell.js fitCrumbs() when a part would be cut: drop "Voice ›", then the parent title and its chevron */
+.crumbs.is-no-root > .crumb-link, .crumbs.is-no-root > .crumb-link + .ico,
+.crumbs.is-no-parent > strong:not(:last-child), .crumbs.is-no-parent > strong:not(:last-child) + .ico { display: none; }
 .topbar-row { display: contents; }
 .crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-sm); color: var(--slate); margin-right: auto; padding: 8px 0; }
 .crumbs strong { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -782,6 +782,13 @@ function ensureWizard(ctx) {
     if (draft && draft.status === 'scheduled') ctx.state.wz.audience = ctx.state.wz.audience || { ...sampleLike(draft), source: 'saved' };
     if (draft && draft.reached > 1 && !ctx.state.wz.audience && draft.list) ctx.state.wz.audience = { ...sampleLike(draft), source: 'saved' };
   }
+  // The caller ID must be one this account can use right now (dataset, Sandbox/Live or numbers may have changed):
+  // otherwise the select would show its first option while the launch used the stale value.
+  const owned = ownedCallerIds();
+  if (!owned.some((x) => x.number === ctx.state.wz.cid)) {
+    const pick = owned.find((x) => x.number === '02-xxx-1002') || owned[0];
+    ctx.state.wz.cid = pick ? pick.number : SANDBOX_CALLER;
+  }
   const step = Number(ctx.params.query.step);
   if (step >= 1 && step <= STEPS && step <= ctx.state.wz.reached + 1 && ctx.state.wz.stepFromQuery !== step) { ctx.state.wz.step = step; ctx.state.wz.stepFromQuery = step; ctx.state.wz.reached = Math.max(ctx.state.wz.reached, step); }
   return ctx.state.wz;
@@ -1460,6 +1467,16 @@ function patchDetail(root, ctx, c) {
   if (body && ds.page === 0 && ds.filter === 'all' && !ds.q) {
     const sorted = recipientsOf(c).slice().sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 20);
     body.innerHTML = sorted.map((r, i) => String(recipientRow(ctx, c, { ...r, fresh: r.at && nowMs() - r.at < TICK_MS * 1.5 }, i))).join('');
+  }
+  // The recipient filter counts follow the run too (not only when the campaign ends).
+  const sel = root.querySelector('[data-field="cdFilter"]');
+  if (sel) {
+    const all = recipientsOf(c);
+    for (const o of sel.options) {
+      const n = o.value === 'all' ? all.length : all.filter((r) => recGroup(r) === o.value).length;
+      const txt = `${ctx.t(`d.seg.${o.value}`)} (${fmt.int(n)})`;
+      if (o.textContent !== txt) o.textContent = txt;
+    }
   }
 }
 

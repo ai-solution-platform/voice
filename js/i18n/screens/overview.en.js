@@ -37,7 +37,7 @@ export default {
   'chk.4.help': 'Business documents once. Usually active within 2 business days after the documents are approved.',
   'chk.4.btn': 'Get a number',
   'chk.4.done': 'Done · {number} is active',
-  'chk.4.progress': 'In review · documents sent {date} · usually active within 2 business days after approval',
+  'chk.4.progress': 'In review · documents sent {date}',
   'chk.4.order': 'View order',
   'chk.5.title': 'Set a daily spending limit and alerts',
   'chk.5.help': 'Calls stop at the limit and you get an alert.',
@@ -59,6 +59,7 @@ export default {
   'tile.calls': 'Calls',
   'tile.answered': 'Answered',
   'tile.used': 'Credits used',
+  'tile.usedToday': 'Credits used today',
   'tile.failed': 'Failed',
   'tile.trial': 'Trial minutes',
   'tile.creditsLine': 'About {days} days left at this pace',
@@ -155,7 +156,7 @@ export default {
 
   // alert banner (active account)
   'alert.title': 'Failure rate {pct}% in 15 minutes',
-  'alert.body': '{failed} of {of} calls failed {from}–{to} · {campaign} · threshold {threshold}% · resolved {resolved} (moved to the backup route)',
+  'alert.body': '{failed} of {of} calls failed {from}–{to} · {campaign} · threshold {threshold}% · resolved {resolved} (moved to the backup Thai carrier route)',
   'alert.logs': 'View logs',
   'alert.rules': 'Alert rules',
   'alert.ack': 'Acknowledge',

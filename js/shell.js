@@ -112,6 +112,19 @@ function applyRail() {
   if (b) { const st = burgerState(); b.setAttribute('aria-label', st.label); b.setAttribute('aria-expanded', String(st.expanded)); b.dataset.tip = st.label; }
 }
 
+/**
+ * The crumbs drop whole parts — first "Voice ›", then the parent title — instead of squeezing a part down to an
+ * empty "›" (container queries alone cannot tell, because the room depends on the language and the bar's chips).
+ */
+function fitCrumbs(root) {
+  const c = root && root.querySelector('.crumbs');
+  if (!c) return;
+  c.classList.remove('is-no-root', 'is-no-parent');
+  const cut = (sel) => [...c.querySelectorAll(sel)].some((el) => el.offsetParent !== null && el.scrollWidth > el.clientWidth + 1);
+  if (cut(':scope > strong')) c.classList.add('is-no-root');
+  if (cut(':scope > strong:not(:last-child)')) c.classList.add('is-no-parent');
+}
+
 function topbarHTML() {
   const cur = currentScreen();
   const mod = cur.mod;
@@ -408,12 +421,16 @@ export function mountShell(appEl, h) {
   const band = $('[data-band]');
   const foot = $('.app-foot');
 
+  // Refit the crumbs when the bar changes width (window resize, nav rail toggle) or the web fonts arrive.
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitCrumbs(topbar)).observe(topbar);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => fitCrumbs(topbar));
   const render = {
     sidebar: () => { sidebar.innerHTML = String(sidebarHTML()); },
     topbar: () => {
       const a = document.activeElement;
       const key = a && topbar.contains(a) ? a.dataset.action : null;
       topbar.innerHTML = String(topbarHTML());
+      fitCrumbs(topbar);
       if (key) { const el = $$('[data-action]', topbar).find((x) => x.dataset.action === key); if (el) el.focus(); }
     },
     band: () => { band.innerHTML = String(bandHTML()); },
