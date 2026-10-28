@@ -31,7 +31,7 @@ const parts = (d) => {
 export const fmt = {
   /** 12,450 */
   int: (n) => nf({ maximumFractionDigits: 0 }).format(Math.round(Number(n) || 0)),
-  /** Floor for balances shown in tiles/chips (21,596.64 → 21,596). */
+  /** Floor for balances shown in tiles/chips (21,679.68 → 21,679). */
   floor: (n) => nf({ maximumFractionDigits: 0 }).format(Math.floor(Number(n) || 0)),
   /** General number with up to `max` decimals. */
   num: (n, max = 2) => nf({ maximumFractionDigits: max }).format(Number(n) || 0),

@@ -96,8 +96,8 @@ export function bkkDay(d) {
 }
 
 /**
- * A Thai number's first month: on the order day it is charged for the days left in that calendar month (the
- * order day included), then the full monthly fee on the 1st of each month.
+ * A Thai number's first month: from the day it goes live it is charged for the days left in that calendar month
+ * (that day included), then the full monthly fee on the 1st of each month. Nothing is charged while it is in review.
  * numberFirstMonth(99, '2026-10-27') → { days: 5, cycleDays: 31, each: 15.97, from: '2026-10-27', to: '2026-10-31', next: '2026-11-01' }
  */
 export function numberFirstMonth(monthly, start) {
@@ -108,13 +108,24 @@ export function numberFirstMonth(monthly, start) {
 }
 
 /**
- * What one number costs in a calendar month (period 'YYYY-MM'). The fee runs from `feeFrom` (null = not charged
- * yet, e.g. ordered in Sandbox), else the order day, else the day it became active.
+ * Number types sold by request, not from a price list: mobile 06 / 08 / 09 and toll-free 1800 (monthly fee and
+ * per-minute rates by quote, confirmed by the operator) and 4-digit 1xxx (NBTC fee paid by the customer + an ANTS
+ * service fee by quote). Screens show "By quote", never a price. Nothing is charged until the number is active.
+ */
+export const BY_QUOTE_TYPES = Object.freeze(['mobile', 'toll_free', 'short_code']);
+
+/**
+ * What one number costs in a calendar month (period 'YYYY-MM'). Only a live number is charged (status active, or
+ * releasing until the end of the paid month): the fee runs from the day it went live (`since`), prorated for that
+ * month, then the full fee on the 1st (SRS-NUM-06). A number in review — documents or a letter being checked — is
+ * never charged, whatever its type; by-quote types and number requests (no `monthly`) follow the same rule.
+ * `feeFrom` overrides the start day (null = not charged yet).
  * → { credits, kind: 'full' | 'first' | 'none', …numberFirstMonth() for 'first' }
  */
 export function numberFeeInMonth(n, period) {
   if (!n || n.monthly == null) return { credits: 0, kind: 'none' };
-  const start = n.feeFrom !== undefined ? n.feeFrom : n.orderedAt || n.since;
+  if (n.status !== 'active' && n.status !== 'releasing') return { credits: 0, kind: 'none' };
+  const start = n.feeFrom !== undefined ? n.feeFrom : n.since;
   if (!start) return { credits: 0, kind: 'none' };
   const from = bkkDay(start);
   if (from.slice(0, 7) > period) return { credits: 0, kind: 'none' };

@@ -300,6 +300,7 @@ export default {
   'term.billing_minute': 'The first minute is billed in full, then per minute. A 38-second call costs 1 minute.',
   'term.kyc': 'Business documents we check before giving you a Thai number (KYC, Know Your Customer).',
   'term.loa': 'A signed letter that lets us show a 02 number you already own as your caller ID (LOA).',
+  'term.nbtc': "Thailand's telecoms regulator, which allocates 4-digit numbers to companies (NBTC, National Broadcasting and Telecommunications Commission).",
   'term.dnc': 'Numbers you must not call. We remove them before every campaign.',
   'term.calling_hours': 'Times when campaigns may call. Outside them, calls wait for the next window.',
   'term.opt_out': 'Pressing 9 stops calls from you. The number joins your Do-Not-Call list.',

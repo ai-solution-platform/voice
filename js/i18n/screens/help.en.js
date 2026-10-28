@@ -202,6 +202,11 @@ export default {
     '- **Power of attorney**, only if the person who signs is not a director named on the company certificate',
     'We aim to review documents within 1 business day and to activate the number within 2 business days after approval (targets, not guarantees). You will see the status on the Numbers page and by email.',
     'Price: {number} credits per number a month, or {numberBulk} from {bulkFrom} numbers.',
+    'Mobile, toll-free 1800 and 4-digit numbers are sent as a request, priced by quote. Nothing is charged until the number is live.',
+    '- **Mobile 06 / 08 / 09**: inbound calls, one-to-one calls and number masking, not campaigns. Add a letter of intent; each number is registered to your company.',
+    '- **Toll-free 1800**: inbound only. You pay a monthly fee and every inbound minute; callers pay nothing. Add the operator application form.',
+    '- **4-digit 1xxx**: NBTC allocates it to your company by board resolution, for a fixed term. We prepare the application; the timing depends on the NBTC board cycle.',
+    'Not offered: 1900 premium-rate numbers, international numbers, and moving numbers from another provider (porting).',
   ],
   'art.loa-caller-id': [
     'Already have an 02 number that customers know? You can show it as your caller ID with a letter of authorisation (LOA).',

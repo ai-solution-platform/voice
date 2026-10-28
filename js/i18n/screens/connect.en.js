@@ -253,6 +253,7 @@ export default {
   'wz.5.failOn': 'Firewall problem simulated. The inbound test now fails until you retry.',
   'wz.5.heartbeat': 'Listening for OPTIONS from {ip} · checked {n} s ago',
   'wz.5.activateRule': 'Activate turns on once OPTIONS and one test call pass.',
+  'wz.5.emergency': 'Emergency numbers 191, 1669 and 199 are not supported on this trunk — callers hear a message to dial from a mobile phone.',
   'wz.5.activate': 'Activate trunk',
   'wz.5.activateH': 'Waiting for OPTIONS and one test call.',
   'wz.5.ready': 'All checks passed. You can activate the trunk.',

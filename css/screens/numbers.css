@@ -12,8 +12,8 @@
 .nm-tbl td { vertical-align: top; }
 .nm-tbl .nm-route { min-width: 200px; max-width: 320px; }
 .nm-tbl .nm-cid { min-width: 150px; }
-.nm-tbl a.mono { color: var(--navy); text-decoration: none; }
-.nm-tbl a.mono:hover { text-decoration: underline; text-underline-offset: 3px; }
+.nm-tbl a.mono, .nm-tbl .nm-rqrow a.strong { color: var(--navy); text-decoration: none; }
+.nm-tbl a.mono:hover, .nm-tbl .nm-rqrow a.strong:hover { text-decoration: underline; text-underline-offset: 3px; }
 .nm-foot { justify-content: space-between; }
 .nm-empty .empty { padding: var(--s-6) var(--s-5); max-width: 640px; }
 .nm-empty h2 { font-size: var(--fs-lg); }
@@ -147,3 +147,48 @@
 .nm-block { display: block; }
 .nm-cost-h { flex-wrap: wrap; }
 .nm-cost-h .chip { white-space: normal; max-width: 100%; }
+
+/* number types — step 1 cards, request details, badges, request drawer */
+.nm-types { display: grid; grid-template-columns: repeat(auto-fill, minmax(184px, 1fr)); gap: var(--s-2); }
+.nm-tcard { min-height: 100%; cursor: pointer; }
+.nm-tcard .t { font-size: var(--fs); }
+.nm-tcard-h { display: flex; align-items: center; gap: 8px; color: var(--navy); }
+.nm-tcard-how { margin-top: auto; padding-top: 4px; color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; }
+.nm-tcard[aria-pressed="true"] .nm-tcard-h { color: var(--orange-700); }
+.nm-tcard-ext { border-style: dashed; }
+.nm-notoffered { margin: 2px 0 0; }
+.nm-info { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.nm-info-r { display: grid; grid-template-columns: minmax(120px, 0.32fr) minmax(0, 1fr); gap: 4px 14px; font-size: var(--fs-sm); line-height: 1.5; }
+.nm-info-r dt { color: var(--slate); }
+.nm-info-r dd { margin: 0; color: var(--text); }
+.nm-badge { background: #fff; border: 1px solid var(--border-strong); color: var(--text-2); font-weight: 600; }
+.nm-typeline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 3px; }
+.nm-pref { display: flex; align-items: stretch; max-width: 300px; }
+.nm-pref-x { display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--border-strong); border-right: 0; border-radius: 10px 0 0 10px; background: var(--sunken); color: var(--slate); white-space: nowrap; }
+.nm-pref .input { border-radius: 0 10px 10px 0; min-width: 0; flex: 1; letter-spacing: .08em; }
+.nm-fs { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.nm-fs legend { padding: 0; margin-bottom: 4px; }
+.nm-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 150px)); gap: var(--s-2); }
+.nm-choices .input { letter-spacing: .12em; }
+.nm-life { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; }
+.nm-life li { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: var(--fs-sm); color: var(--slate); position: relative; }
+.nm-life li + li::before { content: ""; position: absolute; left: 10px; top: -9px; height: 14px; border-left: 2px solid var(--border); }
+.nm-life-dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border-strong); background: #fff; display: grid; place-items: center; flex: none; }
+.nm-life .is-done { color: var(--text); }
+.nm-life .is-done .nm-life-dot { background: var(--navy); border-color: var(--navy); color: #fff; }
+.nm-life .is-current { color: var(--text); font-weight: 600; }
+.nm-life .is-current .nm-life-dot { border-color: var(--accent-fill); box-shadow: 0 0 0 3px rgba(242, 99, 34, .14); }
+.nm-life.is-closed li { opacity: .6; }
+.nm-quote .stack span { font-size: var(--fs-sm); }
+.nm-qtyseg { align-self: flex-start; }
+.nm-qtyseg button { min-width: 44px; }
+.nm-foot-t { max-width: 760px; }
+@media (max-width: 767px) {
+  .nm-types { grid-template-columns: minmax(0, 1fr); }
+  .nm-info-r { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .nm-choices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .nm-pref { max-width: none; }
+}
+/* sample quote (no amounts in the demo) */
+.nm-sample { font-weight: 700; letter-spacing: .04em; }
+.nm-quote-v { gap: 2px; }

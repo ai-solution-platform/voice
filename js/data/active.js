@@ -52,7 +52,7 @@ const toDay = ([date, calls, answered, outCalls, outAnswered, otpSent, otpAnswer
 };
 
 /** Month to date (1–27 Oct, to 14:35). */
-export const MTD = { outMin: 44726, otpAnswered: 5078, inMin: 8078, recMin: 15151, numbers: 6 /* charged this month: 3 full + 3 first months */, extraConcurrent: 10 };
+export const MTD = { outMin: 44726, otpAnswered: 5078, inMin: 8078, recMin: 15151, numbers: 5 /* charged this month: 3 full + 2 first months (from the day they went live) */, extraConcurrent: 10 };
 
 // 28 Sep – 13 Oct are synthesised from the Mon 26 Oct row with a weekday pattern, then corrected so that
 // 1–13 Oct + the 14 rows above = the month-to-date totals exactly (Billing reconciles with Reports).
@@ -98,7 +98,7 @@ export function buildSeries() {
 export const TODAY = {
   calls: 1303, outbound: 1043, otpNotif: 167, inbound: 93,
   answered: 927, answerRatePct: 71.1,
-  creditsUsedVoice: 1906.02, creditsUsedOther: 290, monthVoice: 68743.36, monthAll: 81353.36,
+  creditsUsedVoice: 1906.02, creditsUsedOther: 290, monthVoice: 68660.32, monthAll: 81270.32,
   failed: 74, failedPct: 5.7, failed503: 26,
   notConnected: { total: 376, noAnswer: 181, phoneOff: 48, busy: 82, failed: 74, failed503: 26, failed404: 31, failedOther: 17, notDialled: 39, dnc: 24, hours: 9, intl: 6 },
   liveTotal: 14,
@@ -123,10 +123,10 @@ export const MEMBERS = [
 ];
 
 // ---------- numbers ----------
-// Number fees (prices.js numberFeeInMonth): a number's first month is charged on its order day for the days left
-// in that month, then the full fee on the 1st. October: 3 × 99 (since September) + 2 × 89.42 (ordered 4 Oct,
-// 28 of 31 days; active 14 Oct after the documents were approved) + 19.16 (02-xxx-1004, ordered 26 Oct, 6 days)
-// = 495.00 — the "numbers" usage line below. The LOA number has no fee.
+// Number fees (prices.js numberFeeInMonth): a number is charged from the day it goes live, for the days left in
+// that month, then the full fee on the 1st; a number in review is never charged. October: 3 × 99 (live since
+// September) + 2 × 57.48 (ordered 4 Oct, live 14 Oct after the documents were approved: 18 of 31 days) = 411.96 —
+// the "numbers" usage line below. 02-xxx-1004 (ordered 26 Oct, documents in review) and the LOA number cost nothing.
 export const NUMBERS = [
   { id: 'num_01JB3A1000', number: '02-xxx-1000', e164: '+662xxx1000', type: 'local', area: '02', sub: SUBS.hq, routing: { type: 'flow', ref: 'flw_01JB5MAIN1' }, callerIdFor: 'agents', status: 'active', since: '2026-09-14', monthly: PRICES.number },
   { id: 'num_01JB3A1001', number: '02-xxx-1001', e164: '+662xxx1001', type: 'local', area: '02', sub: SUBS.dv, routing: { type: 'webhook', ref: 'https://crm.example.com/ants/webhook' }, callerIdFor: 'campaigns', status: 'active', since: '2026-09-14', monthly: PRICES.number },
@@ -135,6 +135,24 @@ export const NUMBERS = [
   { id: 'num_01JB3B0120', number: '053-xxx-120', e164: '+6653xxx120', type: 'regional', area: '053', sub: SUBS.hq, routing: { type: 'trunk', ref: 'cm-branch-pbx', fallback: 'flw_01JB5CLSD2' }, status: 'active', orderedAt: isoOn('2026-10-04', '09:40'), since: '2026-10-14', monthly: PRICES.number },
   { id: 'num_01JB3A1004', number: '02-xxx-1004', e164: '+662xxx1004', type: 'local', area: '02', sub: SUBS.ck, routing: null, status: 'in-review', orderedAt: isoOn('2026-10-26', '10:15'), monthly: PRICES.number },
   { id: 'num_01JB3C7788', number: '02-xxx-7788', e164: '+662xxx7788', type: 'loa', area: '02', sub: SUBS.hq, routing: null, status: 'in-review', letterSentAt: '2026-10-20', monthly: null },
+];
+// ---------- number requests: mobile 06/08/09 · toll-free 1800 · 4-digit 1xxx ----------
+// Sold by quote (prices.js BY_QUOTE_TYPES): no price is shown and nothing is charged until a number is active, so
+// these never reach the number fees (Numbers tile = Billing usage = statement = invoice stay at 411.96).
+// Lifecycle: requested → quoted (accepted in the console) → in_review → active; 4-digit: preparing →
+// submitted_to_nbtc → allocated → active. Preferred numbers are masked like every other number in the demo.
+// Toll-free numbers are 10 digits (1800-xxx-xxx). The quote itself is a SAMPLE without amounts (public demo).
+export const NUMBER_REQUESTS = [
+  {
+    id: 'nrq_01JB7TF241', type: 'toll_free', quantity: 1, preferred: ['241'], number: '1800-xxx-241', sub: SUBS.ck, status: 'quoted',
+    requestedAt: isoOn('2026-10-20', '10:20'), quotedAt: isoOn('2026-10-22', '15:05'), quoteRef: 'Q-2610-0418', docs: ['tfForm'],
+    use: { purpose: 'orders', who: { en: 'Patients booking or moving an appointment', th: 'ผู้ป่วยที่โทรจองหรือเลื่อนนัด', zh: '预约或改约的患者' }, perDay: '150' },
+  },
+  {
+    id: 'nrq_01JB7SC4D1', type: 'short_code', quantity: 1, preferred: ['1xx7', '1xx8', '1xx9'], number: null, sub: SUBS.hq, status: 'submitted_to_nbtc',
+    requestedAt: isoOn('2026-10-05', '11:10'), submittedAt: isoOn('2026-10-09', '14:30'), docs: ['nbtcForm', 'profile'],
+    use: { purpose: 'service', who: { en: 'Customers of all our services across Thailand', th: 'ลูกค้าทุกบริการของเราทั่วประเทศ', zh: '全国各项服务的客户' }, perMonth: '20000' },
+  },
 ];
 /** Buy-flow search results for Local 02 "contains 24". */
 export const NUMBER_SEARCH_24 = ['02-xxx-2401', '02-xxx-2412', '02-xxx-2424', '02-xxx-2438', '02-xxx-2440', '02-xxx-2457', '02-xxx-2468', '02-xxx-2490'];
@@ -243,8 +261,8 @@ export const CAMPAIGNS = [
     file: 'flu_vaccine_nov.csv', rows: 2000, duplicates: 86, dnc: 40, toCall: 1874, messageSec: 26, keys: { 1: 'confirm', 2: 'sms-link', 9: 'opt-out' },
     hours: 'Mon–Sat 09:00–18:00', retries: 2, retryAfterMin: 30, cps: 2, concurrent: 20,
     // Launch: up to 2,417.46 · expected ≈ 1,332.02 (55.1% = C2's answer rate) · typed token "1874"
-    estimate: { max: 2417.46, expected: 1332.02, expectedPct: 55.1, balanceAfter: 20264.62, balanceAfterMax: 19179.18, dailyAfter: 4613.48 },
-    simulatedResult: { answered: 1033, answeredPct: 55.1, noAnswer: 657, busy: 122, failed: 62, keysPressed: { 1: 816, 2: 163, 9: 8, none: 46 }, credits: 1332.57, balanceAfter: 20264.07 },
+    estimate: { max: 2417.46, expected: 1332.02, expectedPct: 55.1, balanceAfter: 20347.66, balanceAfterMax: 19262.22, dailyAfter: 4613.48 },
+    simulatedResult: { answered: 1033, answeredPct: 55.1, noAnswer: 657, busy: 122, failed: 62, keysPressed: { 1: 816, 2: 163, 9: 8, none: 46 }, credits: 1332.57, balanceAfter: 20347.11 },
     confirmToken: '1874',
   },
   { id: 'bc_01JBHD26OC', name: { en: 'Delivery slot confirmation · 26 Oct', th: 'ยืนยันเวลาส่งสินค้า · 26 ต.ค.', zh: '确认送货时段 · 10月26日' }, sub: SUBS.dv, callerId: '02-xxx-1001', purpose: 'service', status: 'completed', toCall: 696, result: { answered: 386, answeredPct: 55.5 }, credits: 804.96, startedAt: isoOn('2026-10-26', '12:30') },
@@ -348,23 +366,23 @@ export const REPORTS_7D = {
 
 // ---------- billing ----------
 /** Account balance at 14:35. CONTRACT: the live value is store credits.balance (top-ups and calls change it). */
-export const BALANCE = 21596.64;
+export const BALANCE = 21679.68;
 export const BILLING = {
-  avgPerDay7: 2651, usedToday: { total: 2196.02, voice: 1906.02, other: 290 }, usedMonth: { total: 81353.36, voice: 68743.36, other: 12610 },
+  avgPerDay7: 2651, usedToday: { total: 2196.02, voice: 1906.02, other: 290 }, usedMonth: { total: 81270.32, voice: 68660.32, other: 12610 },
   autoTopUp: false,
   usage: [
     { product: 'voice', item: 'outbound', quantity: MTD.outMin, unit: 'min', credits: 57696.54 },
     { product: 'voice', item: 'otp', quantity: MTD.otpAnswered, unit: 'answered-call', credits: 5027.22 },
     { product: 'voice', item: 'inbound', quantity: MTD.inMin, unit: 'min', credits: 2019.5 },
     { product: 'voice', item: 'recording', quantity: MTD.recMin, unit: 'min', credits: 1515.1 },
-    { product: 'voice', item: 'numbers', quantity: MTD.numbers, unit: 'number', credits: 495 },
+    { product: 'voice', item: 'numbers', quantity: MTD.numbers, unit: 'number', credits: 411.96 },
     { product: 'voice', item: 'extraConcurrent', quantity: MTD.extraConcurrent, unit: 'call', credits: 1990 },
     { product: 'sms', item: 'sms', quantity: 18400, unit: 'message', credits: 9860 },
     { product: 'line', item: 'line', quantity: 6100, unit: 'message', credits: 2140 },
     { product: 'email', item: 'email', quantity: 40500, unit: 'email', credits: 610 },
   ],
   statements: [
-    { period: '2026-10', status: 'current', opening: 2950, topUps: 100000, topUpList: [['2026-10-01', 40000], ['2026-10-12', 40000], ['2026-10-22', 20000]], bonus: 0, used: 81353.36, closing: 21596.64 },
+    { period: '2026-10', status: 'current', opening: 2950, topUps: 100000, topUpList: [['2026-10-01', 40000], ['2026-10-12', 40000], ['2026-10-22', 20000]], bonus: 0, used: 81270.32, closing: 21679.68 },
     { period: '2026-09', status: 'closed', opening: 0, topUps: 60000, topUpList: [['2026-09-02', 20000], ['2026-09-16', 40000]], bonus: 2000, used: 59050, closing: 2950 },
   ],
   invoices: [

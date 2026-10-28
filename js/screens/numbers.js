@@ -1,12 +1,18 @@
-// Numbers — #/numbers (list · detail drawer ?n=<id>) · #/numbers/buy (5 steps; ?return=connect · ?step=docs&view=1)
+// Numbers — #/numbers (list · number drawer ?n=<id> · request drawer ?r=<id>) · #/numbers/buy (5 steps; ?return=connect · ?step=docs&view=1)
 // Numbers are always masked (02-xxx-1000); E.164 views keep the mask (+662xxx1000). Prices come from
 // js/data/prices.js only, and the cost is shown on the same screen as the button that spends. KYC files are read
 // for their name and size only — nothing leaves the browser.
+// Step 1 is the type: Landline is ordered now (area → digits → reserve → documents → order). Mobile, toll-free 1800
+// and 4-digit 1xxx are sent as a request (store numberRequests): by quote, nothing charged until the number is
+// active. "Your existing number" opens the letter-of-authorisation form.
 
 import { raw, on, reducedMotion } from '../core/dom.js';
-import { newId, audit, notify, spend, setStep, balance, isPostpaid, numberFeesMonth, currentPeriod, describeProfile } from '../core/actions.js';
+import { newId, audit, notify, setStep, isPostpaid, numberFeesMonth, currentPeriod } from '../core/actions.js';
 import { nowMs } from '../data/clock.js';
-import { PRICES, numberFirstMonth, numberFeeInMonth } from '../data/prices.js';
+import { PRICES, BY_QUOTE_TYPES, numberFirstMonth, numberFeeInMonth } from '../data/prices.js';
+import { registerIcons } from '../ui/icons.js';
+
+registerIcons({ smartphone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.2"/><path d="M10.5 18.3h3"/>' });
 
 export const id = 'numbers';
 export const nav = { group: 'build', icon: 'hash', labelKey: 'nav.numbers' };
@@ -17,12 +23,48 @@ export const css = true;
 /** Hold length for reserved numbers, in minutes. One constant. */
 const RESERVE_MIN = 30;
 const STEP_KEYS = ['type', 'pick', 'docs', 'review', 'done'];
+/** Step labels: a request has "Details" where an order picks the number. */
+const stepKeys = (b) => (isRequest(b.kind) ? ['type', 'details', 'docs', 'review', 'done'] : STEP_KEYS);
 const GROUPS = { '02': ['02'], '03x': ['038', '035', '034'], '0xx': ['053', '043', '074'] };
 const CITY = { '02': 'bkk', '038': 'chonburi', '035': 'ayutthaya', '034': 'nakhonpathom', '053': 'chiangmai', '043': 'khonkaen', '074': 'hatyai' };
 const DOCS = ['cert', 'director', 'address'];
 /** Step 3 checklist (T2 audit #6): the three uploads + how the number is used + power of attorney = 5 items. */
 const USE_PURPOSES = ['otp', 'service', 'reminder', 'payment', 'marketing'];
-const SAMPLE_FILES = { cert: ['company-certificate-sample.pdf', 186368], director: ['director-id-sample.pdf', 142336], address: ['proof-of-address-sample.pdf', 97280], poa: ['power-of-attorney-sample.pdf', 120832] };
+const SAMPLE_FILES = {
+  cert: ['company-certificate-sample.pdf', 186368], director: ['director-id-sample.pdf', 142336], address: ['proof-of-address-sample.pdf', 97280], poa: ['power-of-attorney-sample.pdf', 120832],
+  intent: ['letter-of-intent-sample.pdf', 104448], tfForm: ['toll-free-application-sample.pdf', 132096], nbtcForm: ['nbtc-application-sample.pdf', 158720], profile: ['company-profile-sample.pdf', 214016],
+};
+
+// ---------- number types (step 1) ----------
+/** Types sold in the buy flow. Landline is ordered now; the others are requests (prices.js BY_QUOTE_TYPES). */
+const KINDS = ['landline', 'mobile', 'toll_free', 'short_code'];
+const isRequest = (k) => BY_QUOTE_TYPES.includes(k);
+const KIND_ICON = { landline: 'phone', mobile: 'smartphone', toll_free: 'phone-in', short_code: 'hash', loa: 'file-text' };
+/** List filter: landline = local + regional; loa = your existing number (caller ID only). */
+const TYPE_FILTERS = ['all', 'landline', 'mobile', 'toll_free', 'short_code', 'loa'];
+const typeGroup = (type) => (type === 'local' || type === 'regional' ? 'landline' : type);
+const MOBILE_QTY = [1, 5, 10, 20, 30];
+const TOLL_FREE_MAX = 10;
+/** Our target for a quote (business days) — shown as a target, never a promise. */
+const QUOTE_DAYS = 2;
+/** Preferred ending digits: the last block of the number (mobile 0xx-xxx-xxxx · toll-free 1800-xxx-xxx). */
+const PREF_MAX = { mobile: 4, toll_free: 3 };
+const SC_CHOICES = 3;        // a 4-digit application names up to 3 numbers
+const SC_RE = /^1\d{3}$/;    // 1 + 3 digits
+/** Documents a request adds to the company documents. */
+const EXTRA_DOCS = { landline: [], mobile: ['intent'], toll_free: ['tfForm'], short_code: ['nbtcForm', 'profile'] };
+/** What each type may be used for: mobile = one-to-one calls only (not campaigns or broadcasts); toll-free and 4-digit are inbound. */
+const PURPOSES = { landline: USE_PURPOSES, mobile: ['service', 'agents', 'masking'], toll_free: ['service', 'orders', 'info'], short_code: ['service', 'orders', 'info'] };
+/** Request lifecycle (cancelled / rejected are terminal). */
+const LIFE = { mobile: ['requested', 'quoted', 'in_review', 'active'], toll_free: ['requested', 'quoted', 'in_review', 'active'], short_code: ['preparing', 'submitted_to_nbtc', 'allocated', 'active'] };
+const OPEN = ['requested', 'quoted', 'in_review', 'preparing', 'submitted_to_nbtc', 'allocated'];
+const RQ_TONE = { requested: 'warn', quoted: 'info', in_review: 'warn', preparing: 'warn', submitted_to_nbtc: 'info', allocated: 'info', active: 'ok', cancelled: '', rejected: 'err' };
+const RQ_WHEN = { requested: 'requestedAt', quoted: 'quotedAt', in_review: 'acceptedAt', preparing: 'requestedAt', submitted_to_nbtc: 'submittedAt', allocated: 'allocatedAt', cancelled: 'cancelledAt' };
+const maskShort = (d) => `1xx${String(d).slice(-1)}`;
+/** Number format per type: the pattern (mono, untranslated) · how many digits. */
+const PATTERN = { landline: '02 · 03x · 0xx', mobile: '06 · 08 · 09', toll_free: '1800-xxx-xxx', short_code: '1xxx' };
+const DIGITS = { landline: 9, mobile: 10, toll_free: 10, short_code: 4 };
+const formatLine = (ctx, k) => ctx.html`<span class="mono" translate="no">${PATTERN[k]}</span> · ${ctx.t('by.1.digits', { n: DIGITS[k] })}`;
 /** The use declared with the documents on file (busy account): pre-fills the use item, editable. */
 const USE_ON_FILE = { purpose: 'otp', perDay: '1000' };
 const MODES = ['contains', 'starts', 'ends'];
@@ -37,9 +79,11 @@ const noop = () => {};
 const URL_RE = /^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/[\w./-]*)?$/i;
 
 const freshBuy = () => ({
-  run: 0, step: 1, group: '02', area: '02', qty: 1, sub: null, mode: 'contains', digits: '24', page: 1, loading: false, results: null,
+  run: 0, step: 1, kind: 'landline', group: '02', area: '02', qty: 1, sub: null, mode: 'contains', digits: '24', page: 1, loading: false, results: null,
   picked: [], reserving: false, reservedAt: 0, reserved: [], expired: false, onFile: true, docs: {}, address: '', signer: '', consent: false,
   use: { purpose: '', who: '', perDay: '', touched: false }, signerIsDirector: true,
+  // requests (mobile · toll-free · 4-digit): how many, preferred ending digits, the 4-digit choices (+ which were left)
+  rqQty: 1, pref: '', choices: ['', '', ''], choiceLeft: [false, false, false],
   ordering: false, ordered: [], live: '',
 });
 export const initialState = () => ({ type: 'all', status: 'all', sub: 'all', q: '', buy: freshBuy(), d: null });
@@ -56,6 +100,7 @@ export const commands = [
 // ---------- helpers ----------
 let CTX = null;          // the latest ctx (drawer handlers run after re-renders)
 let DR = null;           // { id, handle } — the open detail drawer
+let RD = null;           // { id, handle } — the open request drawer
 
 const onBuy = () => /^#\/numbers\/buy/.test(location.hash);
 const onList = () => /^#\/numbers(\?|$)/.test(location.hash);
@@ -139,19 +184,64 @@ function cidUse(ctx, n) {
   return '—';
 }
 
+// ---------- requests (mobile · toll-free · 4-digit) ----------
+/** Requests shown in the list. An active request's numbers are in the numbers list, so it is not repeated. */
+const requests = (ctx) => ctx.list('numberRequests').filter((r) => r.status !== 'active');
+
+/** How a request reads in a list: the number in the quote, else the format (× how many), else the 4-digit choices. */
+function rqLabel(rq) {
+  if (rq.number) return rq.number;
+  if (rq.type === 'short_code') return (rq.preferred || []).length ? rq.preferred.join(' · ') : '1xxx';
+  const base = rq.type === 'toll_free' ? '1800-xxx-xxx' : '0xx-xxx-xxxx';
+  return rq.quantity > 1 ? `${base} × ${rq.quantity}` : base;
+}
+
+/** Mobile and toll-free numbers are assigned by the operator after the quote is accepted. */
+const unassigned = (rq) => !rq.number && rq.type !== 'short_code';
+
+/** Type badge (the same in the list, the drawers and the review): Landline · Mobile · Toll-free 1800 · 4-digit · Existing. */
+function badge(ctx, type) {
+  const g = typeGroup(type);
+  return ctx.html`<span class="chip nm-badge">${ctx.icon(KIND_ICON[g] || 'phone', 'ico-xs')}${ctx.t(`badge.${g}`)}</span>`;
+}
+
+function rqChip(ctx, rq) {
+  const { t, html: h, fmt } = ctx;
+  const tone = RQ_TONE[rq.status];
+  const when = rq[RQ_WHEN[rq.status]];
+  return h`<span class="chip ${tone ? `chip-${tone}` : ''}" tabindex="0" data-tip-key="numbers.tip.rq.${rq.status}">${t(`rq.st.${rq.status}`)}</span>${when ? h` <span class="hint-xs nowrap">${t(`rq.when.${rq.status}`, { date: fmt.dayMonth(when) })}</span>` : ''}`;
+}
+
+/** The use declared with a request (seeded answers are { en, th, zh }). */
+function rqUse(ctx, rq) {
+  const { t, fmt } = ctx;
+  const u = rq.use || {};
+  const who = u.who && typeof u.who === 'object' ? ctx.loc(u.who) : String(u.who || '—');
+  const purpose = u.purpose ? t(`docs.use.p.${u.purpose}`) : '—';
+  return u.perMonth != null ? t('rev.useMonth', { purpose, who, n: fmt.int(Number(u.perMonth) || 0) }) : t('rev.use', { purpose, who, n: fmt.int(Number(u.perDay) || 0) });
+}
+
 // ---------- list ----------
-function filtered(ctx) {
+function rowMatches(ctx, row, isRq) {
   const s = ctx.state;
   const q = (s.q || '').replace(/\D/g, '');
-  return ctx.list('numbers').filter((n) => (s.type === 'all' || n.type === s.type)
-    && (s.status === 'all' || n.status === s.status)
-    && (s.sub === 'all' || n.sub === s.sub)
-    && (!q || digitsOf(n.number).includes(q) || digitsOf(n.number).endsWith(q)));
+  if (s.type !== 'all' && typeGroup(row.type) !== s.type) return false;
+  if (s.sub !== 'all' && row.sub !== s.sub) return false;
+  if (s.status !== 'all') {
+    // Requests: "Requests in progress" = any open request; a request whose documents are being checked is also "In review".
+    if (isRq ? !((s.status === 'requests' && OPEN.includes(row.status)) || (s.status === 'in-review' && row.status === 'in_review')) : row.status !== s.status) return false;
+  }
+  if (!q) return true;
+  const texts = isRq ? [rqLabel(row), ...(row.preferred || [])] : [row.number];
+  return texts.some((x) => digitsOf(x).includes(q));
+}
+function filtered(ctx) {
+  return { nums: ctx.list('numbers').filter((n) => rowMatches(ctx, n, false)), reqs: requests(ctx).filter((r) => rowMatches(ctx, r, true)) };
 }
 
 function header(ctx) {
   const { t, html: h, icon } = ctx;
-  const has = ctx.list('numbers').length > 0;
+  const has = ctx.list('numbers').length + requests(ctx).length > 0;
   return h`<div class="page-head"><div class="titles"><h1>${t('title')}${ctx.pageHelp()}</h1><span class="sub">${t('sub')}</span></div>
     <div class="tools">${has ? h`<button type="button" class="btn" data-action="nb.loa">${icon('file-text')}${t('loa')}</button>
       <a class="btn btn-primary" href="#/numbers/buy" data-action="nb.buy">${icon('plus')}${t('buy')}</a>` : ''}</div></div>`;
@@ -161,7 +251,8 @@ function tiles(ctx) {
   const { t, html: h, fmt } = ctx;
   const all = ctx.list('numbers');
   const active = all.filter((n) => n.status === 'active');
-  const review = all.filter((n) => n.status === 'in-review');
+  // In review = numbers whose documents or letter are checked + requests whose documents are checked (same as the filter).
+  const review = [...all.filter((n) => n.status === 'in-review'), ...requests(ctx).filter((r) => r.status === 'in_review')];
   const fees = numberFeesMonth(); // same figure as Billing › Usage, the statement and the invoice
   const tile = (key, value, line, action, val, pressed) => h`<button type="button" class="card tile nm-tile" data-action="${action}" data-value="${val}" aria-pressed="${pressed}"><span class="t">${t(`tile.${key}`)}</span><span class="v">${value}</span><span class="h">${line}</span></button>`;
   return h`<div class="grid g-4 nm-tiles">
@@ -177,30 +268,38 @@ function filters(ctx) {
   const s = ctx.state;
   const subs = ctx.list('subAccounts');
   return h`<div class="nm-filters">
-    <div class="seg" role="group" aria-label="${t('f.typeAria')}">${['all', 'local', 'regional', 'loa'].map((k) => h`<button type="button" data-action="nb.type" data-value="${k}" aria-pressed="${s.type === k}">${t(`f.type.${k}`)}</button>`)}</div>
-    <select class="select nm-sel" data-field="status" data-action="nb.status" aria-label="${t('f.statusAria')}">${['all', 'active', 'in-review', 'releasing'].map((k) => h`<option value="${k}" ${raw(s.status === k ? 'selected' : '')}>${t(`f.status.${k}`)}</option>`)}</select>
+    <div class="seg" role="group" aria-label="${t('f.typeAria')}">${TYPE_FILTERS.map((k) => h`<button type="button" data-action="nb.type" data-value="${k}" aria-pressed="${s.type === k}">${t(`f.type.${k}`)}</button>`)}</div>
+    <select class="select nm-sel" data-field="status" data-action="nb.status" aria-label="${t('f.statusAria')}">${['all', 'active', 'in-review', 'requests', 'releasing'].map((k) => h`<option value="${k}" ${raw(s.status === k ? 'selected' : '')}>${t(`f.status.${k}`)}</option>`)}</select>
     ${subs.length > 1 ? h`<select class="select nm-sel" data-field="sub" data-action="nb.sub" aria-label="${t('f.subAria')}"><option value="all">${t('f.subAll')}</option>${subs.map((x) => h`<option value="${x.id}" ${raw(s.sub === x.id ? 'selected' : '')}>${ctx.loc(x.name)}</option>`)}</select>` : ''}
     <label class="nm-search">${icon('search', 'ico-sm')}<input class="input" type="search" inputmode="numeric" data-field="q" data-action="nb.search" value="${s.q}" placeholder="${t('f.searchPh')}" aria-label="${t('f.searchAria')}" autocomplete="off"></label>
   </div>`;
 }
 
-function table(ctx, rows) {
+function table(ctx, { nums, reqs }) {
   const { t, html: h, fmt } = ctx;
-  if (!rows.length) {
+  if (!nums.length && !reqs.length) {
     return h`<div class="card"><div class="empty empty-center" role="status"><strong>${t('noMatch')}</strong><span class="hint">${t('noMatchHint')}</span>
       <button type="button" class="btn btn-sm" data-action="nb.clear">${t('clear')}</button></div></div>`;
   }
   return h`<div class="card"><div class="tbl-wrap"><table class="tbl nm-tbl"><thead><tr>
       <th>${t('col.number')} · ${t('col.type')}</th><th>${t('col.routing')}</th><th>${ctx.term(t('col.cid'), 'caller_id')}</th><th>${t('col.status')}</th><th class="num">${t('col.monthly')}</th></tr></thead>
-    <tbody>${rows.map((n) => h`<tr class="${ctx.state.fresh === n.id ? 'new-row' : ''}">
+    <tbody>${nums.map((n) => h`<tr class="${ctx.state.fresh === n.id ? 'new-row' : ''}">
       <td><a class="mono strong" href="#/numbers?n=${n.id}" data-action="nb.row" translate="no">${n.number}</a>
-        <div class="hint-xs"><span class="nowrap">${t(`type.${n.type}`)}</span> · ${n.type === 'loa' ? t('type.loaH') : t(`city.${CITY[n.area] || 'bkk'}`)}</div>
+        <div class="nm-typeline">${badge(ctx, n.type)}<span class="hint-xs">${n.type === 'loa' ? t('type.loa') : t(`city.${CITY[n.area] || 'bkk'}`)}</span></div>
         <div class="hint-xs" title="${t('col.sub')}">${ctx.ui.describe.sub(n.sub)}</div></td>
       <td class="nm-route">${routeLabel(ctx, n)}</td>
       <td class="nm-cid">${cidUse(ctx, n)}</td>
       <td class="nowrap nm-stcell">${statusChip(ctx, n)}</td>
-      <td class="num mono">${n.monthly != null ? fmt.int(n.monthly) : '—'}</td></tr>`)}</tbody></table></div>
-    <div class="card-foot row nm-foot"><span class="hint-xs">${t('foot', { price: fmt.int(PRICES.number), bulk: fmt.int(PRICES.numberBulk), from: PRICES.numberBulkFrom })}</span>
+      <td class="num mono">${n.monthly != null ? fmt.int(n.monthly) : '—'}</td></tr>`)}
+    ${reqs.map((rq) => h`<tr class="nm-rqrow ${ctx.state.fresh === rq.id ? 'new-row' : ''}">
+      <td>${unassigned(rq) ? h`<a class="strong" href="#/numbers?r=${rq.id}" data-action="nb.rq.row">${t('rq.toAssign', { count: rq.quantity || 1, n: rq.quantity || 1 })}</a>` : h`<a class="mono strong" href="#/numbers?r=${rq.id}" data-action="nb.rq.row" translate="no">${rqLabel(rq)}</a>`}
+        <div class="nm-typeline">${badge(ctx, rq.type)}<span class="hint-xs">${t(rq.type === 'short_code' ? 'rq.kind.application' : 'rq.kind.request')}</span></div>
+        <div class="hint-xs" title="${t('col.sub')}">${ctx.ui.describe.sub(rq.sub)}</div></td>
+      <td class="nm-route"><span class="hint-xs">${t('rq.route')}</span></td>
+      <td class="nm-cid">${t(rq.type === 'mobile' ? 'rq.cid.mobile' : 'rq.cid.inbound')}</td>
+      <td class="nowrap nm-stcell">${rqChip(ctx, rq)}</td>
+      <td class="num"><span class="hint-xs nowrap">${t('rq.byQuote')}</span></td></tr>`)}</tbody></table></div>
+    <div class="card-foot row nm-foot"><span class="hint-xs nm-foot-t">${t('foot', { price: fmt.int(PRICES.number), bulk: fmt.int(PRICES.numberBulk), from: PRICES.numberBulkFrom })}<span class="nm-block">${t('footRq')}</span></span>
       <span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('common.plannedPrices')}</span></div></div>`;
 }
 
@@ -217,10 +316,11 @@ function emptyState(ctx) {
 function listPage(ctx) {
   const { t, html: h, icon } = ctx;
   const all = ctx.list('numbers');
+  const has = all.length + requests(ctx).length > 0;
   const sbx = sandbox(ctx) && all.length > 0;
   return h`<div class="page nm">${header(ctx)}
     ${sbx ? h`<div class="note note-warn">${icon('info')}<span>${t('sandboxNote', { shared: '02-xxx-0100' })}</span></div>` : ''}
-    ${all.length ? h`${tiles(ctx)}${filters(ctx)}${table(ctx, filtered(ctx))}` : emptyState(ctx)}
+    ${has ? h`${tiles(ctx)}${filters(ctx)}${table(ctx, filtered(ctx))}` : emptyState(ctx)}
     <p class="hint-xs nm-soon">${icon('sparkles', 'ico-xs')} ${t('soon')}</p></div>`;
 }
 
@@ -450,8 +550,189 @@ function drawerActions() {
   };
 }
 
+// ---------- request drawer (?r=<id>) ----------
+function rqDrawerBody(ctx, rq) {
+  const { t, html: h, icon, fmt } = ctx;
+  const life = LIFE[rq.type] || LIFE.mobile;
+  const closed = rq.status === 'cancelled' || rq.status === 'rejected';
+  const at = life.indexOf(rq.status);
+  const open = OPEN.includes(rq.status);
+  const sc = rq.type === 'short_code';
+  const kv = (k, v) => h`<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+  const pref = sc ? h`<span class="mono" translate="no">${(rq.preferred || []).join(' · ') || '—'}</span>`
+    : (rq.preferred || []).length ? t('rd.prefEnds', { digits: rq.preferred.join(', ') }) : t('rd.prefNone');
+  const docs = [...DOCS.map((k) => t(`docs.${k}Short`)), ...(rq.docs || EXTRA_DOCS[rq.type] || []).map((k) => t(`docs.${k}Short`))].join(' · ');
+  let now = '';
+  if (rq.status === 'requested') now = h`<p class="hint-xs">${t('rd.waitQuote', { days: QUOTE_DAYS, date: fmt.dateProse(rq.requestedAt) })}</p>`;
+  else if (rq.status === 'quoted') {
+    now = h`<div class="note note-info nm-quote">${icon('file-text')}<div class="stack" style="gap:6px"><strong>${t('rd.quoteReady')}</strong>
+        <span>${t('rd.quoteBody', { date: fmt.dateProse(rq.quotedAt), ref: quoteRef(rq) })}</span>
+        ${rq.type === 'toll_free' ? h`<span>${t('rd.quoteTollFree')}</span>` : ''}<span>${t('rd.noFee')}</span></div></div>
+      <div class="row"><button type="button" class="btn" data-action="nb.rq.quote" aria-haspopup="dialog">${icon('file-text')}${t('rd.quoteOpen')}</button>
+        <button type="button" class="btn btn-navy" data-action="nb.rq.accept">${icon('check')}${t('rd.accept')}</button></div>
+      <span class="hint-xs">${t('rd.acceptHint')}</span>`;
+  } else if (rq.status === 'in_review') now = h`<p class="hint-xs">${t('rd.reviewBody')}</p>`;
+  else if (rq.status === 'preparing') now = h`<p class="hint-xs">${t('rd.prepBody')}</p>`;
+  else if (rq.status === 'submitted_to_nbtc') now = h`<p class="hint-xs">${t('rd.nbtcBody', { date: fmt.dateProse(rq.submittedAt) })}</p>`;
+  else if (rq.status === 'allocated') now = h`<p class="hint-xs">${t('rd.allocBody')}</p>`;
+  else if (closed) now = h`<p class="hint-xs">${t(rq.status === 'cancelled' ? 'rd.cancelledBody' : 'rd.rejectedBody', { date: fmt.dateProse(rq.cancelledAt || rq.requestedAt) })}</p>`;
+
+  return h`<div class="stack-4 nm-drawer">
+    <div class="stack nm-dhead"><div class="row-tight">${rqChip(ctx, rq)}</div><span class="hint">${badge(ctx, rq.type)} ${t(sc ? 'rq.kind.application' : 'rq.kind.request')} · ${ctx.ui.describe.sub(rq.sub)}</span></div>
+    <div class="nm-e164 row"><span class="hint-xs">${t('rd.id')}</span><code class="mono" translate="no">${rq.id}</code>
+      <button type="button" class="copybtn" data-action="nb.rq.copy" aria-label="${t('rd.copy')}">${icon('copy', 'ico-sm')}</button></div>
+
+    <section class="nm-sec" aria-labelledby="nm-rq-p"><h3 id="nm-rq-p">${t('rd.progress')}</h3>
+      <ol class="nm-life ${closed ? 'is-closed' : ''}">${life.map((k, i) => {
+        const st = closed ? 'todo' : i < at ? 'done' : i === at ? 'current' : 'todo';
+        return h`<li class="is-${st}" ${raw(st === 'current' ? 'aria-current="step"' : '')}><span class="nm-life-dot">${st === 'done' ? icon('check', 'ico-xs') : ''}</span><span>${t(`rq.st.${k}`)}</span></li>`;
+      })}</ol>
+      ${now}</section>
+
+    <section class="nm-sec" aria-labelledby="nm-rq-d"><h3 id="nm-rq-d">${t('rd.details')}</h3>
+      ${kv(t('rd.format'), formatLine(ctx, rq.type))}
+      ${rq.number ? kv(t('rd.number'), h`<span class="mono" translate="no">${rq.number}</span>`) : ''}
+      ${sc ? '' : kv(t('rd.qty'), fmt.int(rq.quantity || 1))}
+      ${kv(t(sc ? 'rd.choices' : 'rd.pref'), pref)}
+      <p class="hint-xs">${rqUse(ctx, rq)}</p>
+      <p class="hint-xs">${t('rd.docs', { list: docs })}</p></section>
+
+    <section class="nm-sec" aria-labelledby="nm-rq-f"><h3 id="nm-rq-f">${t('d.feeTitle')}</h3>
+      ${sc ? h`${kv(ctx.term(t('by.cost.nbtc'), 'nbtc'), t('by.cost.nbtcV'))}${kv(t('by.cost.service'), t('by.cost.byQuote'))}`
+        : h`${kv(t('by.cost.monthlyRq'), t('by.cost.byQuote'))}${kv(t(rq.type === 'toll_free' ? 'by.cost.minutesTf' : 'by.cost.minutesRq'), t('by.cost.byQuote'))}`}
+      ${kv(t('rd.charged'), fmt.credits2(0))}
+      <p class="hint-xs">${t('rd.noFee')}</p>
+      <span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('common.plannedPrices')}</span></section>
+
+    ${open ? h`<section class="nm-sec nm-danger" aria-labelledby="nm-rq-x"><h3 id="nm-rq-x">${t('rd.cancelTitleSec')}</h3>
+      <p class="hint-xs">${t('rd.cancelHint')}</p>
+      <div><button type="button" class="btn btn-danger-ghost" data-action="nb.rq.cancel">${icon('x')}${t(sc ? 'rd.cancelSc' : 'rd.cancel')}</button></div></section>` : ''}
+  </div>`;
+}
+
+// ---------- the quote (a SAMPLE in the demo: no amounts — the real quote, emailed, lists them) ----------
+const quoteRef = (rq) => rq.quoteRef || `Q-${String(rq.id).slice(-6)}`;
+const orgName = (ctx) => { const n = ctx.store.get('org.name'); return n && typeof n === 'object' ? ctx.loc(n) : String(n || '—'); };
+
+/** The quote as lines: shared by the sample view and its .txt download. Amounts are never shown in the demo. */
+function quoteRows(ctx, rq) {
+  const { t, fmt } = ctx;
+  const tf = rq.type === 'toll_free';
+  return [
+    [t('qt.customer'), orgName(ctx)],
+    [t('qt.sent'), fmt.dateProse(rq.quotedAt || rq.requestedAt)],
+    [t('rd.id'), rq.id, true],
+    [t('rev.type'), t(`badge.${rq.type}`)],
+    ...(rq.number ? [[t('rd.number'), rq.number, true]] : []),
+    [t('rd.qty'), fmt.int(rq.quantity || 1)],
+    [t('by.cost.monthlyRq'), null],
+    [t(tf ? 'by.cost.minutesTf' : 'by.cost.minutesRq'), null],
+  ];
+}
+
+function quoteText(ctx, rq) {
+  const { t } = ctx;
+  const lines = [t('qt.fileHead'), '', t('qt.title', { ref: quoteRef(rq) }),
+    ...quoteRows(ctx, rq).map(([k, v]) => `${k}: ${v == null ? `[${t('qt.amount')}]` : v}`),
+    '', t('rd.noFee'), ...(rq.type === 'toll_free' ? [t('rd.quoteTollFree')] : []), '', t('qt.fileHead')];
+  return `${lines.join('\r\n')}\r\n`;
+}
+
+function quoteModal(ctx, rq) {
+  const { t, html: h } = ctx;
+  const ref = quoteRef(rq);
+  const body = h`<div class="stack-3">
+    <div><span class="chip chip-warn nm-sample">${t('qt.sample')}</span></div>
+    <p class="hint">${t('qt.intro')}</p>
+    <div class="card card-pad stack nm-quote-v">${quoteRows(ctx, rq).map(([k, v, mono]) => h`<div class="kv"><span class="k">${k}</span><span class="v">${v == null ? h`<span class="hint">${t('qt.amount')}</span>` : mono ? h`<span class="mono" translate="no">${v}</span>` : v}</span></div>`)}</div>
+    <p class="hint-xs">${t('rd.noFee')}${rq.type === 'toll_free' ? ` ${t('rd.quoteTollFree')}` : ''}</p></div>`;
+  ctx.ui.modal({
+    title: t('qt.title', { ref }), size: 'md', body,
+    buttons: [
+      { label: t('common.close') },
+      { label: t('qt.download'), kind: 'navy', icon: 'download', action: 'nb.rq.qdl', onClick: () => { ctx.ui.download(`ants-voice-quote-SAMPLE-${ref}.txt`, quoteText(ctx, rq)); return false; } },
+    ],
+  });
+}
+
+function refreshRqDrawer() {
+  if (!RD || !CTX) return;
+  const rq = CTX.list('numberRequests').find((x) => x.id === RD.id);
+  if (!rq) { closeRqDrawer(); return; }
+  const a = document.activeElement;
+  const sel = a && RD.handle.el.contains(a) ? focusKey(a) : null;
+  RD.handle.setBody(rqDrawerBody(CTX, rq));
+  if (sel) { const el = RD.handle.el.querySelector(sel); if (el) el.focus({ preventScroll: true }); }
+}
+
+function closeRqDrawer() {
+  if (!RD) return;
+  const h = RD.handle;
+  RD = null;
+  h.close();
+}
+
+function syncRqDrawer(ctx) {
+  const rid = ctx.params.query.r;
+  if (!rid || ctx.params.path.length) { closeRqDrawer(); return; }
+  const rq = ctx.list('numberRequests').find((x) => x.id === rid);
+  if (!rq) {
+    closeRqDrawer();
+    ctx.ui.toast(ctx.t('rd.notFound'), { kind: 'warn', reqId: true });
+    ctx.go('numbers', { replace: true });
+    return;
+  }
+  if (RD && RD.id === rid) { refreshRqDrawer(); return; }
+  closeRqDrawer();
+  const handle = ctx.ui.drawer({
+    title: ctx.t(`rd.title.${rq.type}`),
+    body: rqDrawerBody(ctx, rq),
+    actions: rqDrawerActions(),
+    onClose: () => {
+      if (RD && RD.handle === handle) {
+        RD = null;
+        if (/^#\/numbers\?/.test(location.hash) && /[?&]r=/.test(location.hash)) CTX.go('numbers', { replace: true });
+      }
+    },
+  });
+  RD = { id: rid, handle };
+}
+
+function rqDrawerActions() {
+  const cur = () => CTX;
+  const req = () => cur().list('numberRequests').find((x) => x.id === (RD && RD.id));
+  const patch = (id, fn) => cur().store.update('numberRequests', (list) => list.map((x) => (x.id === id ? fn(x) : x)));
+  return {
+    'nb.rq.copy': (el) => { const rq = req(); if (rq) cur().ui.copy(rq.id, el); },
+    'nb.rq.quote': () => { const rq = req(); if (rq) quoteModal(cur(), rq); },
+    'nb.rq.accept': () => {
+      const ctx = cur();
+      const rq = req();
+      if (!rq || rq.status !== 'quoted') return;
+      patch(rq.id, (x) => ({ ...x, status: 'in_review', acceptedAt: new Date(nowMs()).toISOString() }));
+      audit('number.request.accepted', { number: rqLabel(rq) }, rq.id);
+      ctx.ui.toast(ctx.t('rd.accepted'), { kind: 'success', sub: rq.id });
+    },
+    'nb.rq.cancel': async () => {
+      const ctx = cur();
+      const { t } = ctx;
+      const rq = req();
+      if (!rq || !OPEN.includes(rq.status)) return;
+      const sc = rq.type === 'short_code';
+      const ok = await ctx.ui.confirm({
+        title: t(sc ? 'rd.cancelQSc' : 'rd.cancelQ'), body: t('rd.cancelBody'), consequences: [t(sc ? 'rd.cancelC1Sc' : 'rd.cancelC1')],
+        confirmLabel: t(sc ? 'rd.cancelSc' : 'rd.cancel'), cancelLabel: t('rd.keep'), danger: true,
+      });
+      if (!ok) return;
+      patch(rq.id, (x) => ({ ...x, status: 'cancelled', cancelledAt: new Date(nowMs()).toISOString() }));
+      audit('number.request.cancelled', { number: rqLabel(rq) }, rq.id);
+      ctx.ui.toast(t('rd.cancelled'), { kind: 'info', sub: rq.id });
+    },
+  };
+}
+
 // ---------- LOA modal ----------
-function loaModal(ctx) {
+function loaModal(ctx, { onSent } = {}) {
   const { t, html: h, icon } = ctx;
   const subs = ctx.list('subAccounts');
   let file = null;
@@ -492,6 +773,7 @@ function loaModal(ctx) {
         ctx.store.push('numbers', rec);
         audit('number.loa.sent', { number }, rec.id);
         ctx.ui.toast(t('loaM.toast'), { kind: 'success', sub: number });
+        if (onSent) setTimeout(() => onSent(rec), 0);
         return true;
       } },
     ],
@@ -510,12 +792,13 @@ function loaModal(ctx) {
 function steps(ctx) {
   const { t, html: h, icon } = ctx;
   const b = ctx.state.buy;
-  return h`<ol class="nm-steps" aria-label="${t('by.stepsAria')}">${STEP_KEYS.map((k, i) => {
+  const keys = stepKeys(b);
+  return h`<ol class="nm-steps" aria-label="${t('by.stepsAria')}">${keys.map((k, i) => {
     const n = i + 1;
     const st = n < b.step ? 'done' : n === b.step ? 'current' : 'todo';
     return h`<li class="nm-step is-${st}" ${raw(st === 'current' ? 'aria-current="step"' : '')}><span class="nm-circ">${st === 'done' ? icon('check', 'ico-xs') : n}</span><span class="nm-slbl">${t(`by.s.${k}`)}</span></li>`;
   })}</ol>
-  <p class="nm-stepnow">${t('by.stepNow', { n: b.step, total: STEP_KEYS.length, name: t(`by.s.${STEP_KEYS[b.step - 1]}`) })}</p>`;
+  <p class="nm-stepnow">${t('by.stepNow', { n: b.step, total: keys.length, name: t(`by.s.${keys[b.step - 1]}`) })}</p>`;
 }
 
 function reservationLeft(b) {
@@ -532,7 +815,70 @@ function resvChip(ctx) {
   return h`<span class="chip chip-ok nm-resv" tabindex="0" data-tip-key="numbers.by.2.resvTip" data-tip-vars='{"min":${RESERVE_MIN}}'>${icon('lock')}${t('by.2.reservedFor')} <span class="mono" data-nm-countdown>${mmss(reservationLeft(b))}</span></span>`;
 }
 
+/** Step 1: the type cards. Landline, mobile, toll-free and 4-digit select a type; "Your existing number" opens the LOA form. */
+function typeCards(ctx) {
+  const { t, html: h, icon, fmt } = ctx;
+  const b = ctx.state.buy;
+  const how = (k) => (k === 'landline' ? t('by.1.how.landline', { price: fmt.int(PRICES.number) }) : t(`by.1.how.${k}`));
+  return h`<div class="field"><span class="label" id="nm-kind-l">${t('by.1.typeLabel')}</span>
+    <div class="nm-types" role="group" aria-labelledby="nm-kind-l">
+      ${KINDS.map((k) => h`<button type="button" class="optcard nm-tcard" data-action="by.1.kind" data-value="${k}" aria-pressed="${b.kind === k}">
+        <span class="nm-tcard-h">${icon(KIND_ICON[k], 'ico-sm')}<span class="t">${t(`by.1.t.${k}`)}</span></span>
+        <span class="h">${formatLine(ctx, k)}</span><span class="h">${t(`by.1.h.${k}`)}</span><span class="h strong nm-tcard-how">${how(k)}</span></button>`)}
+      <button type="button" class="optcard nm-tcard nm-tcard-ext" data-action="by.1.existing" aria-haspopup="dialog">
+        <span class="nm-tcard-h">${icon(KIND_ICON.loa, 'ico-sm')}<span class="t">${t('by.1.t.existing')}</span></span>
+        <span class="h">${t('by.1.f.existing')}</span><span class="h">${t('by.1.h.existing')}</span><span class="h strong nm-tcard-how">${t('by.1.how.existing')}${icon('arrow-up-right', 'ico-xs')}</span></button>
+    </div>
+    <p class="hint-xs nm-notoffered">${t('by.1.notOffered')}</p></div>`;
+}
+
+/** The cost panel of a request: by quote, nothing charged until the number is live. */
+function rqCost(ctx) {
+  const { t, html: h, fmt } = ctx;
+  const k = ctx.state.buy.kind;
+  const kv = (a, v) => h`<div class="kv"><span class="k">${a}</span><span class="v">${v}</span></div>`;
+  return h`<aside class="card card-sunken card-pad nm-cost" aria-live="polite">
+    <div class="row nm-cost-h"><strong>${t('by.cost.titleRq')}</strong><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('common.plannedPrices')}</span></div>
+    ${k === 'short_code' ? h`${kv(ctx.term(t('by.cost.nbtc'), 'nbtc'), t('by.cost.nbtcV'))}${kv(t('by.cost.service'), t('by.cost.byQuote'))}`
+      : h`${kv(t('by.cost.monthlyRq'), t('by.cost.byQuote'))}${kv(t(k === 'toll_free' ? 'by.cost.minutesTf' : 'by.cost.minutesRq'), t('by.cost.byQuote'))}`}
+    <div class="kv kv-total"><span class="k">${t('by.cost.todayRq')}</span><span class="v">${fmt.int(0)}</span></div>
+    <p class="hint-xs strong">${t('by.cost.noFee')}</p>
+    ${k === 'toll_free' ? h`<p class="hint-xs">${t('by.cost.tollFree')}</p>` : ''}
+    <p class="hint-xs">${k === 'short_code' ? t('by.cost.quoteSc') : t('by.cost.quote', { days: QUOTE_DAYS })}</p>
+  </aside>`;
+}
+
+function subSelect(ctx) {
+  const { t, html: h } = ctx;
+  const b = ctx.state.buy;
+  const subs = ctx.list('subAccounts');
+  return subs.length > 1 ? h`<label class="field grow"><span class="label">${ctx.term(t('by.1.sub'), 'subaccount')}</span><select class="select" data-field="buySub" data-action="by.1.sub" aria-label="${t('by.1.sub')}">${subs.map((x) => h`<option value="${x.id}" ${raw((b.sub || subs[0].id) === x.id ? 'selected' : '')}>${ctx.loc(x.name)}</option>`)}</select></label>` : '';
+}
+
+/** Step 1 of a request: what the type is, how it is bought, who pays, when it is live. */
+function rqStep1(ctx) {
+  const { t, html: h } = ctx;
+  const k = ctx.state.buy.kind;
+  const row = (label, value) => h`<div class="nm-info-r"><dt>${label}</dt><dd>${value}</dd></div>`;
+  return h`<div class="nm-grid">
+    <div class="stack-4">
+      <dl class="card card-pad nm-info">
+        ${row(t('by.1.i.format'), formatLine(ctx, k))}
+        ${row(t('by.1.i.how'), t(`by.1.how2.${k}`))}
+        ${row(t('by.1.i.use'), t(`by.1.use2.${k}`))}
+        ${row(t('by.1.i.pays'), k === 'toll_free' ? h`<strong>${t('by.1.pays.owner')}</strong>` : t('by.1.pays.caller'))}
+        ${row(t('by.1.i.when'), t(`by.1.when.${k}`, { days: QUOTE_DAYS }))}
+      </dl>
+      ${subSelect(ctx) ? h`<div class="row nm-qtyrow">${subSelect(ctx)}</div>` : ''}
+    </div>
+    ${rqCost(ctx)}</div>`;
+}
+
 function buyStep1(ctx) {
+  return ctx.html`<div class="stack-4">${typeCards(ctx)}${ctx.state.buy.kind === 'landline' ? landlineStep1(ctx) : rqStep1(ctx)}</div>`;
+}
+
+function landlineStep1(ctx) {
   const { t, html: h, icon, fmt } = ctx;
   const b = ctx.state.buy;
   const subs = ctx.list('subAccounts');
@@ -559,6 +905,7 @@ function buyStep1(ctx) {
       <div class="kv kv-total"><span class="k">${t('by.cost.month')}</span><span class="v">${fmt.int(price * b.qty)}</span></div>
       <p class="hint-xs">${price === PRICES.numberBulk ? t('by.cost.bulkOn', { n: PRICES.numberBulkFrom, price: fmt.int(PRICES.numberBulk) }) : t('by.cost.bulk', { n: PRICES.numberBulkFrom, price: fmt.int(PRICES.numberBulk) })}</p>
       <p class="hint-xs">${t('by.cost.inbound', { rate: fmt.rate(PRICES.inbound) })}</p>
+      <p class="hint-xs strong">${t('by.cost.fromLive')}</p>
     </aside></div>`;
 }
 
@@ -597,6 +944,56 @@ function buyStep2(ctx) {
     </div></div>`;
 }
 
+/** Step 2 of a request — what still blocks Next (null = ready). Mobile and toll-free only take optional digits. */
+function detailsProblem(ctx) {
+  const b = ctx.state.buy;
+  if (b.kind !== 'short_code') return null;
+  const filled = b.choices.filter((c) => c);
+  if (filled.some((c) => !SC_RE.test(c))) return ctx.t('by.2.fixChoice');
+  return filled.length ? null : ctx.t('by.2.needChoice');
+}
+/** Typing in step 2 updates Next and its helper in place (no re-render while typing). */
+function syncDetails(root, ctx) {
+  const p = detailsProblem(ctx);
+  const help = root.querySelector('[data-nm-nexthelp]');
+  if (help) { help.textContent = p || ''; help.hidden = !p; }
+  const next = root.querySelector('[data-action="by.next"]');
+  if (next) { if (p) next.setAttribute('aria-disabled', 'true'); else next.removeAttribute('aria-disabled'); }
+}
+
+function rqStep2(ctx) {
+  const { t, html: h, icon } = ctx;
+  const b = ctx.state.buy;
+  const k = b.kind;
+  if (k === 'short_code') {
+    return h`<div class="nm-grid">
+      <div class="stack-4"><fieldset class="nm-fs"><legend class="label">${t('by.2.choices', { n: SC_CHOICES })}</legend>
+        <div class="nm-choices">${b.choices.map((c, i) => {
+          const bad = b.choiceLeft[i] && c && !SC_RE.test(c);
+          return h`<label class="field"><span class="hint-xs">${t('by.2.choice', { n: i + 1 })}${i === 0 ? '' : h` · ${t('by.2.optional')}`}</span>
+            <input class="input mono" id="nm-sc-${i}" data-field="scChoice" data-idx="${i}" value="${c}" inputmode="numeric" maxlength="4" placeholder="1xxx" autocomplete="off" spellcheck="false" translate="no" aria-invalid="${bad ? 'true' : 'false'}" ${raw(bad ? `aria-describedby="nm-sc-e${i}"` : '')}>
+            ${bad ? h`<span class="field-err" id="nm-sc-e${i}">${t('by.2.choiceErr')}</span>` : ''}</label>`;
+        })}</div>
+        <span class="hint-xs">${t('by.2.choiceHint')}</span><span class="hint-xs">${t('by.2.maskNote')}</span></fieldset>
+        <div class="note note-info">${icon('info')}<span>${t('by.2.scNote')}</span></div></div>
+      ${rqCost(ctx)}</div>`;
+  }
+  const qty = k === 'mobile'
+    ? h`<div class="seg nm-qtyseg" role="group" aria-label="${t('by.2.qty')}">${MOBILE_QTY.map((n) => h`<button type="button" data-action="by.2.mqty" data-value="${n}" aria-pressed="${b.rqQty === n}">${n}</button>`)}</div>`
+    : h`<div class="stepper"><button type="button" data-action="by.2.tqty" data-value="-1" aria-label="${t('by.1.less')}" ${raw(b.rqQty <= 1 ? 'aria-disabled="true"' : '')}>${icon('minus', 'ico-sm')}</button>
+        <output aria-live="polite" aria-label="${t('by.2.qty')}">${b.rqQty}</output>
+        <button type="button" data-action="by.2.tqty" data-value="1" aria-label="${t('by.1.more')}" ${raw(b.rqQty >= TOLL_FREE_MAX ? 'aria-disabled="true"' : '')}>${icon('plus', 'ico-sm')}</button></div>`;
+  return h`<div class="nm-grid">
+    <div class="stack-4">
+      <div class="field"><span class="label">${t('by.2.qty')}</span>${qty}${k === 'toll_free' ? h`<span class="hint-xs">${t('by.2.qtyMax', { n: TOLL_FREE_MAX })}</span>` : ''}</div>
+      <label class="field"><span class="label">${t(`by.2.pref.${k}`)}</span>
+        <span class="nm-pref"><span class="mono nm-pref-x" translate="no">${k === 'toll_free' ? '1800-xxx-' : '0xx-xxx-'}</span><input class="input mono" data-field="rqPref" value="${b.pref}" inputmode="numeric" maxlength="${PREF_MAX[k]}" placeholder="${'x'.repeat(PREF_MAX[k])}" autocomplete="off" spellcheck="false" translate="no" aria-describedby="nm-pref-h"></span>
+        <span class="hint-xs" id="nm-pref-h">${t(`by.2.prefHint.${k}`, { n: PREF_MAX[k] })}</span></label>
+      ${k === 'mobile' ? h`<div class="note note-info">${icon('info')}<span>${t('by.2.mobileNote')}</span></div>` : ''}
+    </div>
+    ${rqCost(ctx)}</div>`;
+}
+
 function docRow(ctx, key, i, { skip = false, extra = '' } = {}) {
   const { t, html: h, icon, fmt } = ctx;
   const doc = skip ? null : ctx.state.buy.docs[key];
@@ -620,7 +1017,8 @@ function docRow(ctx, key, i, { skip = false, extra = '' } = {}) {
 /** The use declared for the new number: the user's answers, or the declaration on file until they change it. */
 function useOf(ctx) {
   const b = ctx.state.buy;
-  if (b.use.touched || !ctx.store.get('org.kycApproved')) return { ...b.use, prefilled: false };
+  // The declaration on file is for the landline numbers (OTP and alerts): a request declares its own use.
+  if (b.use.touched || !ctx.store.get('org.kycApproved') || b.kind !== 'landline') return { ...b.use, prefilled: false };
   return { purpose: USE_ON_FILE.purpose, who: ctx.t('docs.use.whoOnFile'), perDay: USE_ON_FILE.perDay, prefilled: true };
 }
 const useComplete = (u) => !!u.purpose && !!String(u.who || '').trim() && Number(u.perDay) > 0;
@@ -630,14 +1028,17 @@ function useRow(ctx) {
   const { t, html: h, icon, fmt } = ctx;
   const u = useOf(ctx);
   const ok = useComplete(u);
+  const k = ctx.state.buy.kind;
+  const inbound = k === 'toll_free' || k === 'short_code';
+  const month = k === 'short_code';
   return h`<li class="nm-doc nm-use is-${ok ? 'ok' : 'empty'}" data-nm-doc="use">
     <div class="nm-doc-h"><span class="nm-doc-ico">${icon(ok ? 'check' : 'edit', 'ico-sm')}</span>
-      <div class="grow"><strong>${t('docs.use')}</strong><div class="hint-xs">${t('docs.useH')}</div></div></div>
+      <div class="grow"><strong>${t(month ? 'docs.usePlan' : 'docs.use')}</strong><div class="hint-xs">${t(k === 'mobile' ? 'docs.useH.mobile' : inbound ? 'docs.useH.inbound' : 'docs.useH')}</div></div></div>
     <div class="nm-use-f">
       <label class="field"><span class="label">${t('docs.use.purpose')}</span><select class="select" data-field="usePurpose" data-action="by.3.purpose">
-        <option value="" ${raw(u.purpose ? '' : 'selected')}>${t('docs.use.pick')}</option>${USE_PURPOSES.map((p) => h`<option value="${p}" ${raw(u.purpose === p ? 'selected' : '')}>${t(`docs.use.p.${p}`)}</option>`)}</select></label>
-      <label class="field"><span class="label">${t('docs.use.who')}</span><input class="input" data-field="useWho" data-action="by.3.who" value="${u.who}" placeholder="${t('docs.use.whoPh')}" autocomplete="off"></label>
-      <label class="field"><span class="label">${t('docs.use.perDay')}</span><input class="input tnum" type="number" min="1" step="1" inputmode="numeric" data-field="usePerDay" data-action="by.3.perday" value="${u.perDay}" placeholder="${t('docs.use.perDayPh', { n: fmt.int(200) })}"></label>
+        <option value="" ${raw(u.purpose ? '' : 'selected')}>${t('docs.use.pick')}</option>${PURPOSES[k].map((p) => h`<option value="${p}" ${raw(u.purpose === p ? 'selected' : '')}>${t(`docs.use.p.${p}`)}</option>`)}</select></label>
+      <label class="field"><span class="label">${t(inbound ? 'docs.use.whoIn' : 'docs.use.who')}</span><input class="input" data-field="useWho" data-action="by.3.who" value="${u.who}" placeholder="${t(inbound ? 'docs.use.whoInPh' : 'docs.use.whoPh')}" autocomplete="off"></label>
+      <label class="field"><span class="label">${t(month ? 'docs.use.perMonth' : 'docs.use.perDay')}</span><input class="input tnum" type="number" min="1" step="1" inputmode="numeric" data-field="usePerDay" data-action="by.3.perday" value="${u.perDay}" placeholder="${t('docs.use.perDayPh', { n: fmt.int(month ? 5000 : 200) })}"></label>
     </div>
     ${u.prefilled ? h`<span class="hint-xs nm-use-note">${t('docs.use.onFile')}</span>` : ''}
   </li>`;
@@ -658,19 +1059,22 @@ function buyStep3(ctx) {
   const kyc = ctx.store.get('org.kycApproved');
   const usingFile = kyc && b.onFile;
   const missing = missingDocs(ctx);
+  // A request adds its own document(s) — needed even when the company documents are on file.
+  const extra = EXTRA_DOCS[b.kind].map((k, i) => docRow(ctx, k, DOCS.length + i));
+  const timing = b.kind === 'short_code' ? t('docs.timingSc') : isRequest(b.kind) ? t('docs.timingRq') : t('docs.timing');
   return h`<div class="nm-grid">
     <div class="stack-4">
       ${kyc ? h`<label class="optcard nm-onfile"><span class="row-tight"><input type="checkbox" data-field="onFile" data-action="by.3.onfile" ${raw(b.onFile ? 'checked' : '')}><span class="t">${t('docs.onFile', { date: fmt.dateProse(kyc) })}</span></span><span class="h">${t('docs.onFileH')}</span></label>` : ''}
-      ${usingFile ? h`<ol class="nm-doclist">${DOCS.map((k) => h`<li class="nm-doc is-ok" data-nm-doc="${k}"><div class="nm-doc-h"><span class="nm-doc-ico">${icon('check', 'ico-sm')}</span><div class="grow"><strong>${t(`docs.${k}`)}</strong><div class="hint-xs">${t('docs.approved', { date: fmt.dayMonth(kyc) })}</div></div></div></li>`)}${useRow(ctx)}${poaRow(ctx, true)}</ol>`
+      ${usingFile ? h`${extra.length ? h`<div class="note note-warn">${icon('shield')}<span>${t('docs.warn')}</span></div>` : ''}<ol class="nm-doclist">${DOCS.map((k) => h`<li class="nm-doc is-ok" data-nm-doc="${k}"><div class="nm-doc-h"><span class="nm-doc-ico">${icon('check', 'ico-sm')}</span><div class="grow"><strong>${t(`docs.${k}`)}</strong><div class="hint-xs">${t('docs.approved', { date: fmt.dayMonth(kyc) })}</div></div></div></li>`)}${extra}${useRow(ctx)}${poaRow(ctx, true)}</ol>`
         : h`<div class="note note-warn">${icon('shield')}<span>${t('docs.warn')}</span></div>
-          <ol class="nm-doclist">${DOCS.map((k, i) => docRow(ctx, k, i))}${useRow(ctx)}${poaRow(ctx, false)}</ol>
+          <ol class="nm-doclist">${DOCS.map((k, i) => docRow(ctx, k, i))}${extra}${useRow(ctx)}${poaRow(ctx, false)}</ol>
           <label class="field"><span class="label">${t('docs.addr')}</span><textarea class="textarea" rows="2" data-field="address" data-action="by.3.addr" placeholder="${t('docs.addrPh')}">${b.address}</textarea></label>
           <label class="field"><span class="label">${t('docs.signer')}</span><input class="input" data-field="signer" data-action="by.3.signer" value="${b.signer}" placeholder="${t('docs.signerPh')}" autocomplete="off"></label>
           <label class="check nm-consent"><input type="checkbox" data-field="consent" data-action="by.3.consent" ${raw(b.consent ? 'checked' : '')}>${t('docs.consent')}</label>`}
     </div>
     <aside class="card card-sunken card-pad stack nm-kycside">
       <strong>${ctx.term(t('docs.whyTitle'), 'kyc')}</strong><p class="hint-xs">${t('docs.why')}</p>
-      <p class="hint-xs">${t('docs.timing')}</p>
+      <p class="hint-xs">${timing}</p>
       <a class="linkbtn hint-xs" href="#/help/article/thai-number-kyc" data-action="by.3.help">${icon('book', 'ico-xs')}${t('docs.help')}</a>
       <p class="hint-xs ${missing.length ? 'warn-text' : 'ok-text'}" id="nm-next-h" data-nm-missing>${missing.length ? t('docs.missing', { list: missing.join(' · ') }) : t('docs.complete')}</p>
     </aside></div>`;
@@ -680,11 +1084,14 @@ function missingDocs(ctx) {
   const { t } = ctx;
   const b = ctx.state.buy;
   const usingFile = !!(ctx.store.get('org.kycApproved') && b.onFile);
-  const out = usingFile ? [] : DOCS.filter((k) => !(b.docs[k] && b.docs[k].state === 'ok')).map((k) => t(`docs.${k}Short`));
+  const attached = (k) => b.docs[k] && b.docs[k].state === 'ok';
+  const out = usingFile ? [] : DOCS.filter((k) => !attached(k)).map((k) => t(`docs.${k}Short`));
+  out.push(...EXTRA_DOCS[b.kind].filter((k) => !attached(k)).map((k) => t(`docs.${k}Short`)));
   const u = useOf(ctx);
-  if (!u.purpose) out.push(t('docs.use.purposeShort'));
-  if (!String(u.who || '').trim()) out.push(t('docs.use.whoShort'));
-  if (!(Number(u.perDay) > 0)) out.push(t('docs.use.perDayShort'));
+  const inbound = b.kind === 'toll_free' || b.kind === 'short_code';
+  if (!u.purpose || !PURPOSES[b.kind].includes(u.purpose)) out.push(t('docs.use.purposeShort'));
+  if (!String(u.who || '').trim()) out.push(t(inbound ? 'docs.use.whoInShort' : 'docs.use.whoShort'));
+  if (!(Number(u.perDay) > 0)) out.push(t(b.kind === 'short_code' ? 'docs.use.perMonthShort' : 'docs.use.perDayShort'));
   if (usingFile) return out;
   if (!b.signerIsDirector && !(b.docs.poa && b.docs.poa.state === 'ok')) out.push(t('docs.poaShort'));
   if (!b.address.trim()) out.push(t('docs.addrShort'));
@@ -708,22 +1115,14 @@ function syncMissing(root, ctx) {
 }
 
 /**
- * What an order costs. The first month is prorated: on the order day each number is charged for the days left in
- * this month (fee × days ÷ days in the month); from the 1st the full fee. Prepaid: from the balance today. Postpaid:
- * added to the invoice issued on the 1st, within the credit limit.
+ * What an order costs. Nothing is charged when the order is placed or while the documents are checked: the fee
+ * starts the day the number goes live, prorated for the rest of that month, then the full fee on the 1st
+ * (prices.js numberFeeInMonth · SRS-NUM-06). Prepaid: from the balance; postpaid: on that month's invoice.
  */
 function orderMath(ctx) {
   const b = ctx.state.buy;
   const price = unitPrice(ctx, b.qty);
-  const monthly = price * b.qty;
-  const live = ctx.store.get('env') === 'live';
-  const first = firstMonth(price);
-  const firstTotal = Math.round(first.each * b.qty * 100) / 100;
-  const today = live ? firstTotal : 0;
-  const postpaid = isPostpaid();
-  const open = postpaid ? describeProfile().openInvoice : null;
-  return { price, monthly, first, firstTotal, today, live, postpaid, invoiceOn: (open && open.issuedAt) || first.next,
-    left: balance(), after: Math.round((balance() - today) * 100) / 100, short: live && balance() < today };
+  return { price, monthly: price * b.qty, live: ctx.store.get('env') === 'live', postpaid: isPostpaid() };
 }
 
 function buyStep4(ctx) {
@@ -746,36 +1145,16 @@ function buyStep4(ctx) {
     <aside class="card card-pad stack nm-pay" aria-labelledby="nm-pay-h">
       <div class="row nm-cost-h"><strong id="nm-pay-h">${t('rev.costTitle')}</strong><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('common.plannedPrices')}</span></div>
       <div class="kv"><span class="k">${t('rev.monthly', { n: b.qty, price: fmt.int(m.price) })}</span><span class="v">${fmt.int(m.monthly)}</span></div>
-      ${m.live ? h`<div class="kv"><span class="k">${t('rev.firstMonth', { from: fmt.dayMonth(m.first.from), to: fmt.dayMonth(m.first.to) })}</span><span class="v">${fmt.credits2(m.firstTotal)}</span></div>
-        <p class="hint-xs mono nm-prorate" data-nm-prorate>${b.qty > 1 ? t('rev.prorateN', { count: m.first.days, days: m.first.days, price: fmt.int(m.price), cycle: m.first.cycleDays, each: fmt.credits2(m.first.each), n: b.qty, total: fmt.credits2(m.firstTotal) }) : t('rev.prorate', { count: m.first.days, days: m.first.days, price: fmt.int(m.price), cycle: m.first.cycleDays, each: fmt.credits2(m.first.each) })}</p>
-        <div class="kv"><span class="k">${m.postpaid ? t('rev.addedInvoice', { month: periodName(ctx, m.invoiceOn) }) : t('rev.today')}</span><span class="v" data-nm-today>${fmt.credits2(m.today)}</span></div>
-        <p class="hint-xs">${m.postpaid ? t('rev.thenPostpaid', { price: fmt.int(m.monthly), issued: fmt.dateProse(m.invoiceOn), date: fmt.dayMonth(m.first.next) }) : t('rev.thenOn', { price: fmt.int(m.monthly), date: fmt.dayMonth(m.first.next) })}</p>
-        ${m.postpaid ? h`<div class="kv kv-total"><span class="k">${t('rev.limitAfter')}</span><span class="v" data-nm-after>${fmt.credits2(m.after)}</span></div>
-          <p class="hint-xs">${t('rev.limitNow', { left: fmt.credits2(m.left), limit: fmt.int(describeProfile().creditLimit || 0) })}</p>`
-          : h`<div class="kv kv-total"><span class="k">${t('rev.after')}</span><span class="v" data-nm-after>${fmt.credits2(m.after)}</span></div>`}`
-        : h`<div class="kv"><span class="k">${t('rev.today')}</span><span class="v">${fmt.int(0)}</span></div>
-        <p class="hint-xs">${t('rev.sandbox', { price: fmt.int(m.monthly) })}</p>`}
-      ${m.short ? h`<div class="note note-warn">${icon('alert')}<div class="grow">${m.postpaid ? t('rev.shortLimit') : t('rev.short')} ${m.postpaid ? h`<a class="linkbtn" href="#/billing?section=mode" data-action="by.4.limit">${t('rev.limitLink')}</a>` : h`<button type="button" class="linkbtn" data-action="by.4.topup">${t('top.topup')}</button>`}</div></div>` : ''}
-      <button type="button" class="btn btn-primary btn-lg btn-block nm-order" data-action="by.4.order" ${raw(b.ordering ? 'aria-busy="true"' : b.expired || m.short ? 'aria-disabled="true" aria-describedby="nm-order-h"' : '')}>${b.ordering ? raw('<span class="spin" aria-hidden="true"></span>') : icon('check')}${t('rev.order', { price: fmt.int(m.monthly) })}</button>
-      <span class="hint-xs" id="nm-order-h">${b.expired ? t('rev.expired') : m.short ? (m.postpaid ? t('rev.shortLimit') : t('rev.short')) : !m.live ? t('rev.orderHintSandbox') : m.postpaid ? t('rev.orderHintPostpaid', { month: periodName(ctx, m.invoiceOn) }) : t('rev.orderHint')}</span>
+      <div class="kv kv-total"><span class="k">${t('rev.today')}</span><span class="v" data-nm-today>${fmt.int(0)}</span></div>
+      <p class="hint-xs strong">${t('rev.noFeeReview')}</p>
+      <p class="hint-xs">${!m.live ? t('rev.sandbox', { price: fmt.int(m.monthly) }) : m.postpaid ? t('rev.feeStartsPostpaid', { price: fmt.int(m.monthly) }) : t('rev.feeStarts', { price: fmt.int(m.monthly) })}</p>
+      <button type="button" class="btn btn-primary btn-lg btn-block nm-order" data-action="by.4.order" ${raw(b.ordering ? 'aria-busy="true"' : b.expired ? 'aria-disabled="true" aria-describedby="nm-order-h"' : '')}>${b.ordering ? raw('<span class="spin" aria-hidden="true"></span>') : icon('check')}${t('rev.order', { price: fmt.int(m.monthly) })}</button>
+      <span class="hint-xs" id="nm-order-h">${b.expired ? t('rev.expired') : !m.live ? t('rev.orderHintSandbox') : m.postpaid ? t('rev.orderHintPostpaid') : t('rev.orderHint')}</span>
     </aside></div>`;
 }
 
-/** "November" — the month an invoice is issued in (the postpaid invoice of the 1st). */
-function monthName(ctx, ymd) {
-  const loc = ctx.lang === 'th' ? 'th-TH' : ctx.lang === 'zh' ? 'zh-CN' : 'en-GB';
-  return new Intl.DateTimeFormat(loc, { month: 'long', timeZone: 'Asia/Bangkok' }).format(new Date(`${String(ymd).slice(0, 10)}T12:00:00+07:00`));
-}
-
-/** Billing-period month of an invoice issued on `ymd` (issued 1 Nov → October), matching Billing's invoice labels. */
-function periodName(ctx, ymd) {
-  const d = new Date(`${String(ymd).slice(0, 10)}T12:00:00+07:00`);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return monthName(ctx, d.toISOString().slice(0, 10));
-}
-
 function buyStep5(ctx) {
-  const { t, html: h, icon, fmt } = ctx;
+  const { t, html: h, icon } = ctx;
   const b = ctx.state.buy;
   const nums = ctx.list('numbers').filter((n) => b.ordered.includes(n.id));
   const ret = ctx.params.query.return === 'connect';
@@ -784,12 +1163,70 @@ function buyStep5(ctx) {
     <h2>${t('done.title', { count: nums.length, n: nums.length })}</h2>
     <div class="row nm-done-nums">${nums.map((n) => h`<span class="chip chip-navy mono" translate="no">${n.number}</span>`)}<span class="chip chip-warn">${t('st.review')}</span></div>
     <p class="hint">${t('done.body')}</p>
-    <ol class="nm-next"><li>${t('done.n1')}</li><li>${t('done.n2')}</li><li>${sandbox(ctx) ? t('done.n3Sandbox') : t('done.n3', { date: fmt.dateProse(firstMonth(PRICES.number).next) })}</li></ol>
+    <ol class="nm-next"><li>${t('done.n1')}</li><li>${t('done.n2')}</li><li>${sandbox(ctx) ? t('done.n3Sandbox') : t('done.n3')}</li></ol>
     <div class="row nm-done-a">
       <a class="btn btn-primary" href="#/numbers?n=${nums[0] ? nums[0].id : ''}" data-action="by.5.route">${icon('route')}${t('done.route')}</a>
       ${ret ? h`<a class="btn btn-navy" href="#/connect/sip" data-action="by.5.connect">${icon('server')}${t('done.connect')}</a>` : ''}
       <a class="btn" href="#/numbers" data-action="by.5.back">${t('done.back')}</a>
       <button type="button" class="btn btn-ghost" data-action="by.5.another">${icon('plus')}${t('done.another')}</button></div></div>`;
+}
+
+/** Step 4 of a request: what is asked for, the documents, and "By quote" next to the Send button. */
+function rqStep4(ctx) {
+  const { t, html: h, icon, fmt } = ctx;
+  const b = ctx.state.buy;
+  const k = b.kind;
+  const sc = k === 'short_code';
+  const kyc = ctx.store.get('org.kycApproved');
+  const subId = b.sub || (ctx.list('subAccounts')[0] || {}).id;
+  const kv = (a, v) => h`<div class="kv"><span class="k">${a}</span><span class="v">${v}</span></div>`;
+  const choices = b.choices.filter((c) => SC_RE.test(c));
+  const u = useOf(ctx);
+  const use = { purpose: u.purpose ? t(`docs.use.p.${u.purpose}`) : '—', who: String(u.who || '').trim() || '—', n: fmt.int(Number(u.perDay) || 0) };
+  return h`<div class="nm-grid">
+    <div class="stack-4">
+      <section class="card nm-rev"><div class="card-head"><h3>${t('rev.request')}</h3><button type="button" class="linkbtn" data-action="by.4.edit" data-value="2">${t('rev.edit')}</button></div>
+        <div class="card-body stack">
+          ${kv(t('rev.type'), badge(ctx, k))}
+          ${kv(t('rd.format'), formatLine(ctx, k))}
+          ${sc ? kv(t('rd.choices'), h`<span class="mono" translate="no">${choices.join(' · ')}</span>`) : h`${kv(t('rd.qty'), fmt.int(b.rqQty))}${kv(t('rd.pref'), b.pref ? t('rd.prefEnds', { digits: b.pref }) : t('rd.prefNone'))}`}
+          ${subId ? kv(t('by.1.sub'), ctx.ui.describe.sub(subId)) : ''}</div></section>
+      <section class="card nm-rev"><div class="card-head"><h3>${ctx.term(t('rev.docs'), 'kyc')}</h3><button type="button" class="linkbtn" data-action="by.4.edit" data-value="3">${t('rev.edit')}</button></div>
+        <div class="card-body stack"><p class="hint">${kyc && b.onFile ? t('rev.docsOnFile', { date: fmt.dateProse(kyc) }) : t('rev.docsNew', { n: fmt.int(DOCS.length + (b.signerIsDirector ? 0 : 1)), signer: b.signer || '—' })}</p>
+          <p class="hint">${t('rev.docsExtra', { list: EXTRA_DOCS[k].map((d) => t(`docs.${d}Short`)).join(' · ') })}</p>
+          <p class="hint">${sc ? t('rev.useMonth', use) : t('rev.use', use)}</p></div></section>
+    </div>
+    <aside class="card card-pad stack nm-pay" aria-labelledby="nm-pay-h">
+      <div class="row nm-cost-h"><strong id="nm-pay-h">${t('rev.costTitle')}</strong><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('common.plannedPrices')}</span></div>
+      ${sc ? h`${kv(ctx.term(t('by.cost.nbtc'), 'nbtc'), t('by.cost.nbtcV'))}${kv(t('by.cost.service'), t('by.cost.byQuote'))}`
+        : h`${kv(t('by.cost.monthlyRq'), t('by.cost.byQuote'))}${kv(t(k === 'toll_free' ? 'by.cost.minutesTf' : 'by.cost.minutesRq'), t('by.cost.byQuote'))}`}
+      <div class="kv kv-total"><span class="k">${t('rev.today')}</span><span class="v" data-nm-today>${fmt.int(0)}</span></div>
+      <p class="hint-xs strong">${t('by.cost.noFee')}</p>
+      ${k === 'toll_free' ? h`<p class="hint-xs">${t('by.cost.tollFree')}</p>` : ''}
+      <button type="button" class="btn btn-primary btn-lg btn-block nm-order" data-action="by.4.send" aria-describedby="nm-order-h" ${raw(b.ordering ? 'aria-busy="true"' : '')}>${b.ordering ? raw('<span class="spin" aria-hidden="true"></span>') : icon('send')}${t('rev.send')}</button>
+      <span class="hint-xs" id="nm-order-h">${sc ? t('rev.sendHintSc') : t('rev.sendHint', { days: QUOTE_DAYS })}</span>
+    </aside></div>`;
+}
+
+/** Step 5 of a request: sent, its status and what happens next. */
+function rqStep5(ctx) {
+  const { t, html: h, icon } = ctx;
+  const b = ctx.state.buy;
+  const rq = ctx.list('numberRequests').find((x) => x.id === b.ordered[0]);
+  if (!rq) return h`<div class="nm-done" role="status"><a class="btn" href="#/numbers" data-action="by.5.back">${t('done.back')}</a></div>`;
+  const sc = rq.type === 'short_code';
+  const next = sc ? ['done.sc.n1', 'done.sc.n2', 'done.sc.n3'] : ['done.rq.n1', 'done.rq.n2', rq.type === 'toll_free' ? 'done.rq.n3tf' : 'done.rq.n3'];
+  return h`<div class="nm-done" role="status">
+    <span class="nm-done-ico"><svg class="ico ico-xl check-draw" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span>
+    <h2>${t(sc ? 'done.scTitle' : 'done.rqTitle')}</h2>
+    <div class="row nm-done-nums">${unassigned(rq) ? '' : h`<span class="chip chip-navy mono" translate="no">${rqLabel(rq)}</span>`}${badge(ctx, rq.type)}${rqChip(ctx, rq)}</div>
+    ${unassigned(rq) ? h`<p class="hint strong">${t('done.rqAssigned', { count: rq.quantity || 1, n: rq.quantity || 1 })}</p>` : ''}
+    <p class="hint">${t('done.rqBody')}</p>
+    <ol class="nm-next">${next.map((k) => h`<li>${t(k, { days: QUOTE_DAYS })}</li>`)}</ol>
+    <div class="row nm-done-a">
+      <a class="btn btn-primary" href="#/numbers?r=${rq.id}" data-action="by.5.view">${icon('list')}${t('done.rqView')}</a>
+      <a class="btn" href="#/numbers" data-action="by.5.back">${t('done.back')}</a>
+      <button type="button" class="btn btn-ghost" data-action="by.5.another">${icon('plus')}${t('done.rqAnother')}</button></div></div>`;
 }
 
 function docsView(ctx) {
@@ -810,17 +1247,20 @@ function buyPage(ctx) {
   const { t, html: h, icon } = ctx;
   if (ctx.params.query.view === '1') return docsView(ctx);
   const b = ctx.state.buy;
-  const body = [null, buyStep1, buyStep2, buyStep3, buyStep4, buyStep5][b.step](ctx);
+  const rq = isRequest(b.kind);
+  const body = rq ? [null, buyStep1, rqStep2, buyStep3, rqStep4, rqStep5][b.step](ctx) : [null, buyStep1, buyStep2, buyStep3, buyStep4, buyStep5][b.step](ctx);
   const missing = b.step === 3 ? missingDocs(ctx) : [];
-  const canNext = b.step === 1 || (b.step === 2 && b.reservedAt && !b.expired) || (b.step === 3 && !missing.length);
-  const nextHelp = b.step === 2 ? (b.expired ? t('by.2.expired') : t('by.nextNeedsResv')) : t('docs.missing', { list: missing.join(' · ') });
+  const problem = b.step === 2 && rq ? detailsProblem(ctx) : null;
+  const canNext = b.step === 1 || (b.step === 2 && (rq ? !problem : b.reservedAt && !b.expired)) || (b.step === 3 && !missing.length);
+  const nextHelp = b.step === 2 ? (rq ? problem || '' : b.expired ? t('by.2.expired') : t('by.nextNeedsResv')) : t('docs.missing', { list: missing.join(' · ') });
+  const head = rq && b.step >= 4 ? (b.step === 4 ? 'reviewRq' : b.kind === 'short_code' ? 'doneSc' : 'doneRq') : stepKeys(b)[b.step - 1];
   return h`<div class="page nm">
     <div class="page-head"><div class="titles"><h1>${t('by.title')}${ctx.pageHelp()}</h1><span class="sub">${t('by.sub')}</span></div>
       <div class="tools">${b.step < 5 ? h`<button type="button" class="btn btn-ghost" data-action="by.cancel">${t('common.cancel')}</button>` : ''}</div></div>
-    ${sandbox(ctx) && b.step < 5 ? h`<div class="note note-info">${icon('info')}<span>${t('by.sandbox')}</span></div>` : ''}
+    ${sandbox(ctx) && b.step < 5 ? h`<div class="note note-info">${icon('info')}<span>${t(rq ? 'by.sandboxRq' : 'by.sandbox')}</span></div>` : ''}
     <section class="card nm-buy" aria-labelledby="nm-buy-h">
       <div class="nm-stepsbar">${steps(ctx)}</div>
-      <div class="card-head"><h2 id="nm-buy-h">${t(`by.h.${STEP_KEYS[b.step - 1]}`)}</h2>${b.step === 2 || b.step === 3 ? resvChip(ctx) : ''}</div>
+      <div class="card-head"><h2 id="nm-buy-h">${t(`by.h.${head}`)}</h2>${(b.step === 2 || b.step === 3) && !rq ? resvChip(ctx) : ''}</div>
       <div class="card-body">${body}</div>
       ${b.step < 4 ? h`<div class="card-foot row nm-buyfoot">
         <button type="button" class="btn" data-action="by.back" ${raw(b.step === 1 ? 'aria-disabled="true"' : '')}>${icon('arrow-left', 'ico-sm')}${t('common.back')}</button>
@@ -890,15 +1330,48 @@ function placeOrder(ctx) {
     const m = orderMath(ctx);
     const subId = bb.sub || (ctx.list('subAccounts')[0] || {}).id || null;
     const at = new Date(nowMs()).toISOString();
-    const recs = bb.reserved.map((num) => ({ id: newId('num'), number: num, e164: e164(num), type: bb.group === '02' ? 'local' : 'regional', area: bb.area, sub: subId, routing: null, callerIdFor: null, status: 'in-review', orderedAt: at, feeFrom: m.live ? at : null, monthly: m.price }));
+    const recs = bb.reserved.map((num) => ({ id: newId('num'), number: num, e164: e164(num), type: bb.group === '02' ? 'local' : 'regional', area: bb.area, sub: subId, routing: null, callerIdFor: null, status: 'in-review', orderedAt: at, monthly: m.price }));
     ctx.store.set('numbers', [...ctx.list('numbers'), ...recs]);
-    if (m.today) spend(m.today);
     recs.forEach((r) => { audit('number.ordered', { number: r.number, monthly: r.monthly }, r.id); notify('numberOrdered', { vars: { number: r.number }, href: `numbers?n=${r.id}` }); });
     setStep('number', 'progress');
     bb.ordered = recs.map((r) => r.id);
     bb.ordering = false;
     bb.step = 5;
     ctx.ui.toast(t('toast.T13', { num: recs.map((r) => r.number).join(', ') }), { kind: 'success' });
+    redraw(ctx, onBuy);
+  }, 800);
+}
+
+/**
+ * Send a request (POST …/number-requests { type, quantity, preferred[], use, documentIds[] } → 201 { id, status }).
+ * Nothing is spent: by quote, no fee until the number is active (prices.js numberFeeInMonth never counts a request).
+ * 4-digit choices are masked once sent, like every number in the demo.
+ */
+function sendRequest(ctx) {
+  const { t } = ctx;
+  const b = ctx.state.buy;
+  if (b.ordering) return;
+  b.ordering = true;
+  ctx.rerender();
+  soon(ctx, (s) => {
+    const bb = s.buy;
+    const kind = bb.kind;
+    const sc = kind === 'short_code';
+    const u = useOf(ctx);
+    const at = new Date(nowMs()).toISOString();
+    const rec = {
+      id: newId('nrq'), type: kind, quantity: sc ? 1 : bb.rqQty,
+      preferred: sc ? bb.choices.filter((c) => SC_RE.test(c)).map(maskShort) : (bb.pref ? [bb.pref] : []),
+      number: null, sub: bb.sub || (ctx.list('subAccounts')[0] || {}).id || null, status: sc ? 'preparing' : 'requested', requestedAt: at,
+      use: { purpose: u.purpose, who: String(u.who || '').trim(), ...(sc ? { perMonth: u.perDay } : { perDay: u.perDay }) },
+      docs: EXTRA_DOCS[kind].slice(),
+    };
+    ctx.store.push('numberRequests', rec);
+    audit('number.request.sent', { number: rqLabel(rec) }, rec.id);
+    bb.ordered = [rec.id];
+    bb.ordering = false;
+    bb.step = 5;
+    ctx.ui.toast(t(sc ? 'toast.scSent' : 'toast.rqSent'), { kind: 'success', sub: rec.id });
     redraw(ctx, onBuy);
   }, 800);
 }
@@ -938,6 +1411,7 @@ export function mount(root, ctx) {
     'by.3.perday': noop,
     'by.3.director': noop,
     'by.3.help': noop,
+    'nb.rq.row': noop, // link to ?r= (the request drawer)
     'nb.loa': () => loaModal(ctx),
     'nb.empty.loa': () => loaModal(ctx),
     'nb.type': (el) => ctx.setState({ type: el.dataset.value }),
@@ -950,13 +1424,34 @@ export function mount(root, ctx) {
     'by.back': () => { const s = ctx.state.buy; if (s.step > 1) { s.step -= 1; ctx.rerender(); } },
     'by.next': () => {
       const s = ctx.state.buy;
-      if (s.step === 1) { s.step = 2; if (!s.results) { search(ctx); return; } }
-      else if (s.step === 2 && s.reservedAt && !s.expired) s.step = 3;
+      const rq = isRequest(s.kind);
+      if (s.step === 1) { s.step = 2; if (!rq && !s.results) { search(ctx); return; } }
+      else if (s.step === 2 && (rq ? !detailsProblem(ctx) : s.reservedAt && !s.expired)) s.step = 3;
       else if (s.step === 3 && !missingDocs(ctx).length) s.step = 4;
       ctx.rerender();
       const card = root.querySelector('.nm-buy');
       if (card && card.getBoundingClientRect().top < 0) card.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
     },
+    // Step 1 — the type. Changing it starts the use declaration again and releases a landline reservation.
+    'by.1.kind': (el) => {
+      const s = ctx.state.buy;
+      const k = el.dataset.value;
+      if (s.kind === k || !KINDS.includes(k)) return;
+      const held = s.reservedAt && !s.expired;
+      s.kind = k;
+      s.rqQty = 1;
+      s.pref = s.pref.slice(0, PREF_MAX[k] || 4);
+      s.use = { purpose: '', who: '', perDay: '', touched: false };
+      if (held) { s.reservedAt = 0; s.reserved = []; s.picked = []; s.expired = false; }
+      ctx.rerender();
+      if (held) ctx.ui.toast(t('by.2.released'), { kind: 'info' });
+    },
+    'by.1.existing': () => loaModal(ctx, { onSent: () => { ctx.state.buy = { ...freshBuy(), run: ctx.state.buy.run + 1 }; ctx.go('numbers'); } }),
+    // Step 2 of a request
+    'by.2.mqty': (el) => { const s = ctx.state.buy; const n = Number(el.dataset.value); if (MOBILE_QTY.includes(n) && n !== s.rqQty) { s.rqQty = n; ctx.rerender(); } },
+    'by.2.tqty': (el) => { const s = ctx.state.buy; const q = Math.max(1, Math.min(TOLL_FREE_MAX, s.rqQty + Number(el.dataset.value))); if (q !== s.rqQty) { s.rqQty = q; ctx.rerender(); } },
+    'by.4.send': () => sendRequest(ctx),
+    'by.5.view': () => { ctx.state.buy = { ...freshBuy(), run: ctx.state.buy.run + 1 }; },
     'by.1.type': (el) => { const s = ctx.state.buy; if (s.group === el.dataset.value) return; s.group = el.dataset.value; s.area = GROUPS[s.group][0]; s.results = null; s.picked = []; s.digits = s.group === '02' ? '24' : ''; ctx.rerender(); },
     'by.1.area': (el) => { const s = ctx.state.buy; s.area = el.dataset.value; s.results = null; s.picked = []; ctx.rerender(); },
     'by.1.qty': (el) => { const s = ctx.state.buy; const q = Math.max(1, Math.min(20, s.qty + Number(el.dataset.value))); if (q !== s.qty) { s.qty = q; if (s.picked.length > q) s.picked = s.picked.slice(0, q); ctx.rerender(); } },
@@ -1017,8 +1512,6 @@ export function mount(root, ctx) {
     },
     'by.4.edit': (el) => { ctx.state.buy.step = Number(el.dataset.value); ctx.rerender(); },
     'by.4.order': () => placeOrder(ctx),
-    'by.4.topup': () => ctx.ui.topup(),
-    'by.4.limit': noop, // link to Billing › How you pay
     'by.5.route': () => { ctx.state.buy = { ...freshBuy(), run: ctx.state.buy.run + 1, ordered: [] }; },
     'by.5.back': () => { ctx.state.buy = { ...freshBuy(), run: ctx.state.buy.run + 1 }; },
     'by.5.connect': () => { ctx.state.buy = { ...freshBuy(), run: ctx.state.buy.run + 1 }; },
@@ -1049,6 +1542,27 @@ export function mount(root, ctx) {
     useWho: (v, el, ev) => setUse(ctx, 'who', v, ev && ev.type === 'change'),
     usePerDay: (v, el, ev) => setUse(ctx, 'perDay', String(v).replace(/[^\d]/g, ''), ev && ev.type === 'change'),
     file: (v, el) => pickFile(el),
+    // Request details: digits only; typing updates Next in place, leaving a 4-digit field shows its error.
+    rqPref: (v, el) => {
+      const clean = String(v).replace(/\D/g, '').slice(0, PREF_MAX[ctx.state.buy.kind] || 4);
+      if (clean !== v) el.value = clean;
+      ctx.state.buy.pref = clean;
+    },
+    scChoice: (v, el) => {
+      const s = ctx.state.buy;
+      const i = Number(el.dataset.idx);
+      if (!(i >= 0 && i < SC_CHOICES)) return;
+      const clean = String(v).replace(/\D/g, '').slice(0, 4);
+      if (clean !== v) el.value = clean;
+      s.choices = s.choices.map((c, j) => (j === i ? clean : c));
+      syncDetails(root, ctx);
+      if (!clean || SC_RE.test(clean)) { // fixed: the error goes as soon as the value is right
+        const err = root.querySelector(`#nm-sc-e${i}`);
+        if (err) err.remove();
+        el.setAttribute('aria-invalid', 'false');
+        el.removeAttribute('aria-describedby');
+      }
+    },
   });
   function setUse(c, field, v, redrawNow) {
     const s = c.state.buy;
@@ -1065,6 +1579,20 @@ export function mount(root, ctx) {
     attach(ctx, el.dataset.doc, { name: f.name, size: f.size });
   }
   ctx.on(root, 'change', 'input[type="file"][data-field="file"]', (ev, el) => pickFile(el));
+  // Leaving a 4-digit field shows its error (like Connect's name fields): re-render only when the error appears or
+  // goes, keep focus on the field the user moved to; a re-render during a press waits for the click (press.js).
+  ctx.on(root, 'focusout', '[data-field="scChoice"]', (ev, el) => {
+    const s = ctx.state.buy;
+    const i = Number(el.dataset.idx);
+    if (!(i >= 0 && i < SC_CHOICES)) return;
+    const shown = () => !!(s.choiceLeft[i] && s.choices[i] && !SC_RE.test(s.choices[i]));
+    const was = shown();
+    s.choiceLeft = s.choiceLeft.map((x, j) => x || j === i);
+    if (shown() === was) return;
+    const to = ev.relatedTarget && root.contains(ev.relatedTarget) && ev.relatedTarget.id ? ev.relatedTarget.id : null;
+    ctx.rerender();
+    if (to && !root.contains(document.activeElement)) { const n = document.getElementById(to); if (n) n.focus({ preventScroll: true }); }
+  });
   ctx.on(root, 'keydown', '[data-field="digits"]', (ev) => {
     if (ev.key !== 'Enter' || ev.isComposing || ev.keyCode === 229) return;
     ev.preventDefault();
@@ -1072,10 +1600,10 @@ export function mount(root, ctx) {
     search(ctx);
   });
 
-  ctx.watch('numbers', 'flows', 'trunks', 'env', 'mode', 'credits', 'subAccounts');
+  ctx.watch('numbers', 'numberRequests', 'flows', 'trunks', 'env', 'mode', 'credits', 'subAccounts');
 
   if (onBuyRoute) {
-    if (b.step === 2 && !b.results && !b.loading) ctx.later(() => search(ctx), 0);
+    if (b.step === 2 && b.kind === 'landline' && !b.results && !b.loading) ctx.later(() => search(ctx), 0);
     // Reservation countdown: ticks the chip text; at 0:00 the reservation expires.
     ctx.every(() => {
       const s = ctx.state.buy;
@@ -1087,6 +1615,9 @@ export function mount(root, ctx) {
     // Leaving with numbers reserved and no order: ask first.
     if (b.reservedAt && !b.expired && b.step < 5) {
       ctx.guard(async () => {
+        // Already released (Cancel asked, or the reservation ended): leave without asking twice.
+        const cur = ctx.state.buy;
+        if (!cur.reservedAt || cur.expired || cur.step >= 5) return true;
         const ok = await ctx.ui.confirm({ title: t('by.leaveTitle'), body: t('by.leaveBody'), confirmLabel: t('by.leaveYes'), cancelLabel: t('by.leaveNo') });
         if (ok) ctx.state.buy = { ...freshBuy(), run: ctx.state.buy.run + 1 };
         return ok;
@@ -1094,8 +1625,10 @@ export function mount(root, ctx) {
     }
   }
 
-  // Detail drawer from ?n= (linkable, survives reload); ?loa=1 opens the LOA form (palette command).
+  // Detail drawer from ?n=, request drawer from ?r= (linkable, survive reload); ?loa=1 opens the LOA form (palette command).
   syncDrawer(ctx);
+  syncRqDrawer(ctx);
   ctx.cleanup(() => { if (!/^#\/numbers\?(.*&)?n=/.test(location.hash)) closeDrawer(); });
+  ctx.cleanup(() => { if (!/^#\/numbers\?(.*&)?r=/.test(location.hash)) closeRqDrawer(); });
   if (!onBuyRoute && ctx.params.query.loa === '1') ctx.later(() => { ctx.go('numbers', { replace: true }); loaModal(ctx); }, 30);
 }

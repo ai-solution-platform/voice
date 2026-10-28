@@ -249,6 +249,7 @@ export default {
   'wz.5.failOn': '已模拟防火墙问题，重试前呼入测试将失败。',
   'wz.5.heartbeat': '正在接收来自 {ip} 的 OPTIONS · {n} 秒前检测',
   'wz.5.activateRule': 'OPTIONS 和任一测试通话通过后即可激活。',
+  'wz.5.emergency': '此中继不支持紧急号码 191、1669 和 199 — 主叫方会听到提示，请改用手机拨打。',
   'wz.5.activate': '激活中继',
   'wz.5.activateH': '正在等待 OPTIONS 和一通测试通话。',
   'wz.5.ready': '所有检测已通过，可以激活中继。',

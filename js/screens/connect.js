@@ -498,6 +498,7 @@ function wzStep5(ctx) {
       </ol>
       ${c.options === 'ok' ? h`<p class="hint-xs row-tight" aria-hidden="true"><span class="dot dot-ok dot-live"></span><span data-heartbeat>${t('wz.5.heartbeat', { ip, n: 0 })}</span></p>` : ''}
       <div><button type="button" class="linkbtn" data-action="wz.5.fail" ${raw(c.inbound === 'run' ? 'aria-disabled="true"' : '')}>${t('wz.5.simulateFail')} <span class="chip chip-navy">${t('common.demoTag')}</span></button></div>
+      <div class="note note-warn" data-wz-emergency>${icon('alert')}<span>${t('wz.5.emergency')} <code class="inline" translate="no">VOICE_4215</code></span></div>
     </div>
     <div class="card card-sunken card-pad stack">
       <p class="hint-xs">${t('wz.3.fix', { media: MEDIA_IPS, ports: MEDIA_PORTS })}</p>

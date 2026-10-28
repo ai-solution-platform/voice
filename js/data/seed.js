@@ -14,7 +14,7 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
 /** Keys that belong to a dataset (swapped on mode change). Everything else in state is global. */
 export const DATASET_KEYS = [
   'org', 'user', 'env', 'credits', 'limits', 'verifiedNumbers', 'onboarding', 'subAccounts', 'members', 'calls', 'liveCalls',
-  'series', 'today', 'numbers', 'numberSearch', 'trunks', 'apiKeys', 'keyTiles', 'webhooks', 'failedEvents', 'flows', 'otpTemplates', 'otpStats',
+  'series', 'today', 'numbers', 'numberRequests', 'numberSearch', 'trunks', 'apiKeys', 'keyTiles', 'webhooks', 'failedEvents', 'flows', 'otpTemplates', 'otpStats',
   'campaigns', 'reports', 'billing', 'alertRules', 'alertChannels', 'alertHistory', 'notifications', 'audit', 'tickets', 'incidents', 'sales', 'pace',
 ];
 
@@ -36,6 +36,7 @@ export function activeDataset() {
     series: A.buildSeries(),
     today: A.TODAY,
     numbers: A.NUMBERS,
+    numberRequests: A.NUMBER_REQUESTS,
     numberSearch: A.NUMBER_SEARCH_24,
     trunks: A.TRUNKS,
     apiKeys: A.API_KEYS,
@@ -77,6 +78,7 @@ export function firstRunDataset(orgName = A.ORG_NAME) {
     series: [],
     today: null,
     numbers: [],
+    numberRequests: [],
     numberSearch: A.NUMBER_SEARCH_24,
     trunks: [],
     apiKeys: [],

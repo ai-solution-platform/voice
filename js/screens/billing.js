@@ -337,6 +337,7 @@ function rateCard(ctx) {
       ${row(t('rates.otp'), fmt.rate(p.otpPerAnsweredCall), t('rates.otpUnit'))}
       ${row(t('rates.inbound'), fmt.rate(p.inbound), t('rates.perMin'))}
       ${row(t('rates.number'), fmt.int(p.number), t('rates.numberUnit', { bulk: fmt.int(p.numberBulk), from: p.numberBulkFrom }))}
+      ${row(t('rates.numberRq'), h`<span class="hint">${t('rates.byQuote')}</span>`, t('rates.numberRqUnit'))}
       ${row(ctx.term(t('rates.trunk'), 'sip_trunk'), fmt.int(p.trunkMonthly), t('rates.trunkUnit', { inc: p.trunkIncludedCalls, extra: fmt.int(p.extraConcurrentCall) }))}
       ${row(t('rates.intl'), fmt.rate(p.international), t('rates.intlUnit'))}
       ${row(ctx.term(t('rates.voiceStd'), 'voice_tier'), t('rates.included'), t('rates.voiceStdUnit'))}
@@ -739,6 +740,7 @@ function rateCardCsv(ctx) {
     { item: 'otp_notification_call', unit: 'answered call', credits: p.otpPerAnsweredCall, note: `up to ${p.otpMaxSec} s; unanswered calls are free` },
     { item: 'inbound', unit: 'minute', credits: p.inbound, note: '' },
     { item: 'thai_number', unit: 'number per month', credits: p.number, note: `${p.numberBulk} each from ${p.numberBulkFrom} numbers` },
+    { item: 'thai_number_by_request', unit: 'number per month', credits: '', note: 'mobile 06/08/09, toll-free 1800, 4-digit 1xxx: by quote; no fee until the number is live; toll-free: you pay every inbound minute; 4-digit: plus the NBTC fee' },
     { item: 'sip_trunk', unit: 'month', credits: p.trunkMonthly, note: `${p.trunkIncludedCalls} concurrent calls included` },
     { item: 'extra_concurrent_call', unit: 'call per month', credits: p.extraConcurrentCall, note: '' },
     { item: 'international', unit: 'minute', credits: p.international, note: 'on request' },
