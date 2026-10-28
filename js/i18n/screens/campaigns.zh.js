@@ -278,6 +278,7 @@ export default {
   's4.testMe': '用这条消息呼叫我的手机',
 
   'cost.title': '费用估算 · 点数',
+  'cost.titlePlan': '费用估算 · 套餐分钟与点数',
   'cost.recipients': '接收人',
   'cost.removed': '已去除 {dups} 个重复号码和 {dnc} 个免打扰号码',
   'cost.billed': '每通接通呼叫计费',

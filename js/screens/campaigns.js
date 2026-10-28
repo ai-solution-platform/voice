@@ -255,6 +255,9 @@ const planTerms = (c, list) => (c.planMin == null ? list : list.map((x) => (x.st
 
 // ---------- sample audience (flu_vaccine_nov.csv, generated in memory) ----------
 const SAMPLE_FILE = 'flu_vaccine_nov.csv';
+/** The sample list's file name follows the preset (the rows are the same invented people). */
+const SAMPLE_FILES = { general: 'customers_nov.csv', payment: 'payment_due_nov.csv', healthcare: 'flu_vaccine_nov.csv', insurance: 'policy_renewal_nov.csv' };
+const sampleFileFor = (w) => SAMPLE_FILES[presetOf(w)] || SAMPLE_FILE;
 const SAMPLE_ROWS = 2000;
 const SAMPLE_DUP = 86;
 const SAMPLE_DNC = 40;
@@ -1222,7 +1225,7 @@ function step1(ctx, w) {
       <input type="file" hidden data-file="csv" accept=".csv,.xlsx,.xls,text/csv">
     </div>
     ${w.savedFile && !a ? h`<p class="note note-info">${icon('info')}<span>${t('s1.savedFile', { file: w.savedFile })}</span></p>` : ''}
-    <p class="hint-xs">${icon('shield', 'ico-xs')} ${t('s1.privacy')} <button type="button" class="linkbtn" data-action="wc.1.sampledl">${t('s1.sampleDl', { file: SAMPLE_FILE })}</button></p>
+    <p class="hint-xs">${icon('shield', 'ico-xs')} ${t('s1.privacy')} <button type="button" class="linkbtn" data-action="wc.1.sampledl">${t('s1.sampleDl', { file: sampleFileFor(w) })}</button></p>
     ${loading ? h`<div class="cp-reading" role="status" aria-live="polite"><div class="row" style="justify-content:space-between"><span>${t('s1.reading', { n: fmt.int(loading.total) })}</span><span class="mono" data-read-pct>${loading.pct}%</span></div>
       <span class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${loading.pct}" aria-label="${t('s1.readingAria')}"><i data-read-bar style="width:${loading.pct}%"></i></span></div>` : ''}
     ${tiles}
@@ -1423,7 +1426,7 @@ function step4(ctx, w) {
 function costCard(ctx, w, e) {
   const { t, html: h, icon, fmt } = ctx;
   const a = w.audience;
-  return h`<aside class="card cp-cost" aria-labelledby="cp-cost-h" data-inv="wc.4.estimate"><div class="card-head"><h3 id="cp-cost-h">${t('cost.title')}</h3><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('common.plannedPrices')}</span></div>
+  return h`<aside class="card cp-cost" aria-labelledby="cp-cost-h" data-inv="wc.4.estimate"><div class="card-head"><h3 id="cp-cost-h">${t(activePlan() ? 'cost.titlePlan' : 'cost.title')}</h3><span class="chip chip-warn" tabindex="0" data-tip-key="common.plannedPricesTip">${t('common.plannedPrices')}</span></div>
     <div class="card-body">
       <div class="kv"><span class="k">${t('cost.recipients')}</span><span class="v">${fmt.int(e.toCall)}</span></div>
       ${a ? h`<p class="hint-xs cp-cost-sub">${t('cost.removed', { dups: fmt.int(a.duplicates), dnc: fmt.int(a.dnc) })}</p>` : ''}
@@ -2011,7 +2014,7 @@ function mountWizard(root, ctx) {
       if (pct >= 100) {
         clearInterval(iv);
         w.loading = null;
-        w.audience = { ...s, file: fileName || s.file, source: fileName ? 'upload' : 'sample' };
+        w.audience = { ...s, file: fileName || sampleFileFor(w), source: fileName ? 'upload' : 'sample' };
         w.err1 = null;
         w.dnc = 'idle';
         // "Next" pressed while the list was being read: carry it out now that the list is in.
@@ -2088,7 +2091,7 @@ function mountWizard(root, ctx) {
     'wc.1.sampledl': () => {
       const s = sampleAudience();
       const lines = ['phone,name,date,time,clinic,person_id', ...s.rows.map((r) => `${r.phone},${NAMES[r.n % NAMES.length].en},${r.date},${r.time},Example Clinic Sukhumvit,${r.pid || ''}`)];
-      ctx.ui.download(SAMPLE_FILE, '﻿' + lines.join('\r\n'), 'text/csv;charset=utf-8');
+      ctx.ui.download(sampleFileFor(ctx.state.wz || {}), '﻿' + lines.join('\r\n'), 'text/csv;charset=utf-8');
     },
     'wc.1.pastetoggle': (el, ev) => { ev.preventDefault(); w.pasteOpen = !w.pasteOpen; ctx.rerender(); },
     'wc.1.paste': () => {

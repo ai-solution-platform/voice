@@ -279,6 +279,7 @@ export default {
   's4.testMe': 'Call my phone with this message',
 
   'cost.title': 'Cost estimate · credits',
+  'cost.titlePlan': 'Cost estimate · plan minutes and credits',
   'cost.recipients': 'Recipients',
   'cost.removed': '{dups} duplicates and {dnc} Do-Not-Call numbers removed',
   'cost.billed': 'Billed per answered call',
